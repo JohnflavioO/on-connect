@@ -201,7 +201,7 @@ select pg_temp.expect_affected(
   format($$update onconnect.tenants set name = 'Org of A, renamed' where id = %L$$, :tenant_a), 1,
   'A can update its selected tenant');
 select pg_temp.expect_count(
-  $select 1 from onconnect.tenants where external_id = 'org-2' and name = 'Second org of A'$,
+  $$select 1 from onconnect.tenants where external_id = 'org-2' and name = 'Second org of A'$$,
   1, 'A second tenant remains unchanged');
 
 select pg_temp.expect_count('select 1 from onconnect.audit_log', 1, 'A reads its own audit entries');
