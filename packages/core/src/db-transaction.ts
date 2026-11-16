@@ -9,7 +9,7 @@ export interface QueryResult<Row = unknown> {
 
 export interface DatabaseConnection {
   query<Row = unknown>(sql: string, params?: readonly unknown[]): Promise<QueryResult<Row>>;
-  release(): void;
+  release(destroy?: boolean): void;
 }
 
 export interface DatabasePool {
@@ -54,6 +54,7 @@ export async function withClientTransaction<T>(
 
   const connection = await pool.connect();
   let began = false;
+  let destroy = false;
   try {
     await connection.query("BEGIN");
     began = true;
@@ -70,11 +71,12 @@ export async function withClientTransaction<T>(
       try {
         await connection.query("ROLLBACK");
       } catch (rollbackError) {
+        destroy = true;
         throw new AggregateError([error, rollbackError], "Transaction and rollback failed");
       }
     }
     throw error;
   } finally {
-    connection.release();
+    connection.release(destroy);
   }
 }
