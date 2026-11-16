@@ -31,3 +31,5 @@ export {
   type DatabasePool,
   type QueryResult,
 } from "./db-transaction.js";
+
+export { createPostgresPool } from "./postgres.js";
