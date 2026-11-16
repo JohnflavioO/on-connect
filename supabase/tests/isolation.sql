@@ -71,7 +71,11 @@ set local role onconnect_app;
 
 -- Application role must not be able to become the system role, even if it sets
 -- the former session flag used by the old implementation.
-select pg_temp.expect_failure('set role onconnect_system', '42501', 'app cannot assume system role');
+-- CI connects as postgres (superuser), which can SET ROLE regardless of the
+-- active role. Check the actual role membership instead.
+select pg_temp.expect_count(
+  $$select 1 where pg_has_role('onconnect_app', 'onconnect_system', 'MEMBER')$$,
+  0, 'app is not a member of the system role');
 set local onconnect.scope = 'system';
 select pg_temp.expect_count('select 1 from onconnect.clients', 0, 'scope GUC cannot elevate app');
 set local onconnect.scope = '';
