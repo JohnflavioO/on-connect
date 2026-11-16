@@ -1,0 +1,2 @@
+# Files are built and run on Linux; keep LF endings even when edited on Windows.
+* text=auto eol=lf
