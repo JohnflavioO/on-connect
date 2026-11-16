@@ -105,16 +105,16 @@ insert into onconnect.connections (id, client_id, tenant_id, status, phone_numbe
 insert into onconnect.tenants (client_id, external_id, name) values
   (:client_a, 'org-2', 'Second org of A');
 select pg_temp.expect_failure(
-  format($insert into onconnect.messages
+  format($$insert into onconnect.messages
     (client_id, tenant_id, connection_id, direction, status, message_type, counterpart, payload)
     select %L, id, %L, 'outbound', 'queued', 'text', '1234567890', '{}'::jsonb
-    from onconnect.tenants where external_id = 'org-2'$, :client_a, :conn_a),
+    from onconnect.tenants where external_id = 'org-2'$$, :client_a, :conn_a),
   '23503', 'message cannot link connection to another tenant of same client');
 select pg_temp.expect_failure(
-  format($insert into onconnect.webhook_events
+  format($$insert into onconnect.webhook_events
     (client_id, tenant_id, connection_id, event_type, dedupe_key, payload, occurred_at)
     select %L, id, %L, 'message', 'cross-tenant', '{}'::jsonb, now()
-    from onconnect.tenants where external_id = 'org-2'$, :client_a, :conn_a),
+    from onconnect.tenants where external_id = 'org-2'$$, :client_a, :conn_a),
   '23503', 'event cannot link connection to another tenant of same client');
 
 -- A row may never mix one client's id with another client's tenant.
