@@ -69,6 +69,13 @@ $$;
 
 set local role onconnect_app;
 
+-- Application role must not be able to become the system role, even if it sets
+-- the former session flag used by the old implementation.
+select pg_temp.expect_failure('set role onconnect_system', '42501', 'app cannot assume system role');
+set local onconnect.scope = 'system';
+select pg_temp.expect_count('select 1 from onconnect.clients', 0, 'scope GUC cannot elevate app');
+set local onconnect.scope = '';
+
 -- ---------------------------------------------------------------- no context
 select pg_temp.expect_count('select 1 from onconnect.clients', 0, 'no context sees no clients');
 select pg_temp.expect_failure(
@@ -76,7 +83,8 @@ select pg_temp.expect_failure(
   '42501', 'no context cannot create a client');
 
 -- -------------------------------------------------------------- system scope
-set local onconnect.scope = 'system';
+reset role;
+set local role onconnect_system;
 
 insert into onconnect.clients (id, slug, name) values
   (:client_a, 'client-a', 'Client A'),
@@ -88,6 +96,22 @@ insert into onconnect.tenants (id, client_id, external_id, name, max_connections
 
 insert into onconnect.connections (id, client_id, tenant_id, status, phone_number_id) values
   (:conn_a, :client_a, :tenant_a, 'connected', '100200300');
+
+-- A connection cannot be paired with another tenant of the same client.
+insert into onconnect.tenants (client_id, external_id, name) values
+  (:client_a, 'org-2', 'Second org of A');
+select pg_temp.expect_failure(
+  format($insert into onconnect.messages
+    (client_id, tenant_id, connection_id, direction, status, message_type, counterpart, payload)
+    select %L, id, %L, 'outbound', 'queued', 'text', '1234567890', '{}'::jsonb
+    from onconnect.tenants where external_id = 'org-2'$, :client_a, :conn_a),
+  '23503', 'message cannot link connection to another tenant of same client');
+select pg_temp.expect_failure(
+  format($insert into onconnect.webhook_events
+    (client_id, tenant_id, connection_id, event_type, dedupe_key, payload, occurred_at)
+    select %L, id, %L, 'message', 'cross-tenant', '{}'::jsonb, now()
+    from onconnect.tenants where external_id = 'org-2'$, :client_a, :conn_a),
+  '23503', 'event cannot link connection to another tenant of same client');
 
 -- A row may never mix one client's id with another client's tenant.
 select pg_temp.expect_failure(
@@ -133,11 +157,12 @@ select pg_temp.expect_failure(
   '23514', 'credential nonce must be 12 bytes');
 
 -- ------------------------------------------------------------ acting as A
-set local onconnect.scope = '';
+reset role;
+set local role onconnect_app;
 set local onconnect.client_id = :client_a;
 
 select pg_temp.expect_count('select 1 from onconnect.clients', 1, 'A sees only itself');
-select pg_temp.expect_count('select 1 from onconnect.tenants', 1, 'A sees only its tenant');
+select pg_temp.expect_count('select 1 from onconnect.tenants', 2, 'A sees both its tenants');
 select pg_temp.expect_count(
   format('select 1 from onconnect.tenants where id = %L', :tenant_b), 0,
   'A cannot read B''s tenant by id');
