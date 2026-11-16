@@ -91,6 +91,16 @@ jobs:
           done
       - name: Run isolation tests
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/isolation.sql
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run real PostgreSQL transaction integration tests
+        env:
+          RUN_POSTGRES_INTEGRATION: "1"
+        run: pnpm --filter @on-connect/core exec vitest run test/postgres.integration.test.ts
 
   docker:
     name: Docker images build
