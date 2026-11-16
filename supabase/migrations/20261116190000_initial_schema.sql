@@ -9,7 +9,8 @@
 --     so row level security applies to it.
 --   * Every transaction declares who it is acting for:
 --         set local onconnect.client_id = '<uuid>';   -- one integrator
---         set local onconnect.scope = 'system';       -- internal jobs only
+--   * System operations require the separate onconnect_system database role.
+--     The application role cannot elevate privileges through session settings.
 --     With neither set, every table returns zero rows and rejects writes.
 --     A forgotten WHERE clause can therefore never cross integrators.
 --
@@ -28,10 +29,13 @@ begin
     --   alter role onconnect_app with login password '...';
     create role onconnect_app nologin;
   end if;
+  if not exists (select 1 from pg_roles where rolname = 'onconnect_system') then
+    create role onconnect_system nologin;
+  end if;
 end
-$$;
+$;
 
-grant usage on schema onconnect to onconnect_app;
+grant usage on schema onconnect to onconnect_app, onconnect_system;
 
 -- ---------------------------------------------------------------------------
 -- Session context helpers
@@ -42,10 +46,11 @@ create function onconnect.current_client_id() returns uuid
   set search_path = ''
   as $$ select nullif(current_setting('onconnect.client_id', true), '')::uuid $$;
 
+-- Unlike a custom GUC, current_user cannot be forged by onconnect_app.
 create function onconnect.is_system() returns boolean
   language sql stable
   set search_path = ''
-  as $$ select coalesce(current_setting('onconnect.scope', true), '') = 'system' $$;
+  as $ select current_user = 'onconnect_system' $;
 
 create function onconnect.touch_updated_at() returns trigger
   language plpgsql
@@ -167,7 +172,8 @@ create table onconnect.connections (
 
   foreign key (tenant_id, client_id)
     references onconnect.tenants (id, client_id) on delete restrict,
-  unique (id, client_id)
+  unique (id, client_id),
+  unique (id, client_id, tenant_id)
 );
 
 -- A Meta phone number can be live in exactly one connection, platform-wide.
@@ -234,8 +240,8 @@ create table onconnect.messages (
   read_at               timestamptz,
   failed_at             timestamptz,
 
-  foreign key (connection_id, client_id)
-    references onconnect.connections (id, client_id) on delete restrict,
+  foreign key (connection_id, client_id, tenant_id)
+    references onconnect.connections (id, client_id, tenant_id) on delete restrict,
   foreign key (tenant_id, client_id)
     references onconnect.tenants (id, client_id) on delete restrict,
   unique (id, client_id)
@@ -330,8 +336,8 @@ create table onconnect.webhook_events (
 
   foreign key (tenant_id, client_id)
     references onconnect.tenants (id, client_id) on delete restrict,
-  foreign key (connection_id, client_id)
-    references onconnect.connections (id, client_id) on delete restrict,
+  foreign key (connection_id, client_id, tenant_id)
+    references onconnect.connections (id, client_id, tenant_id) on delete restrict,
   unique (client_id, dedupe_key),
   unique (id, client_id)
 );
@@ -431,11 +437,12 @@ $$;
 -- Privileges and row level security
 -- ---------------------------------------------------------------------------
 
-grant select, insert, update, delete on all tables in schema onconnect to onconnect_app;
-grant execute on all functions in schema onconnect to onconnect_app;
+grant select, insert, update, delete on all tables in schema onconnect to onconnect_app, onconnect_system;
+grant execute on all functions in schema onconnect to onconnect_app, onconnect_system;
+-- No role membership is granted: application credentials cannot SET ROLE to system.
 
 -- The audit log is append-only for the application.
-revoke update, delete on onconnect.audit_log from onconnect_app;
+revoke update, delete on onconnect.audit_log from onconnect_app, onconnect_system;
 
 do $$
 declare
@@ -455,7 +462,21 @@ begin
          with check (onconnect.is_system() or client_id = onconnect.current_client_id())', t);
   end loop;
 end
-$$;
+$;
+
+-- Separate explicit system policies; session GUCs cannot enable them.
+do $
+declare t text;
+begin
+  foreach t in array array[
+    'client_api_credentials', 'tenants', 'connections', 'provider_credentials',
+    'messages', 'message_jobs', 'webhook_endpoints', 'webhook_events',
+    'webhook_deliveries', 'idempotency_keys', 'audit_log'
+  ] loop
+    execute format('create policy system_access on onconnect.%I for all to onconnect_system using (true) with check (true)', t);
+  end loop;
+end
+$;
 
 alter table onconnect.clients enable row level security;
 alter table onconnect.clients force row level security;
@@ -466,3 +487,6 @@ create policy client_reads_itself on onconnect.clients for select to onconnect_a
 create policy system_manages_clients on onconnect.clients for all to onconnect_app
   using (onconnect.is_system())
   with check (onconnect.is_system());
+
+create policy system_access on onconnect.clients for all to onconnect_system
+  using (true) with check (true);
