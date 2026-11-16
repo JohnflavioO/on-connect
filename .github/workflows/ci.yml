@@ -35,6 +35,39 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
 
+  database:
+    name: Migrations and isolation tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          # Throwaway database that exists only for this job.
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply migrations
+        run: |
+          for file in supabase/migrations/*.sql; do
+            echo "Applying $file"
+            psql -v ON_ERROR_STOP=1 -q -f "$file"
+          done
+      - name: Run isolation tests
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/isolation.sql
+
   docker:
     name: Docker images build
     runs-on: ubuntu-latest
