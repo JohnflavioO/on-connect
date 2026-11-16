@@ -21,3 +21,13 @@ export {
   type QueueName,
   type SystemPingJob,
 } from "./queues.js";
+
+export {
+  ClientTransaction,
+  withClientTransaction,
+  type AuthenticatedClientId,
+  type AuthenticatedPrincipal,
+  type DatabaseConnection,
+  type DatabasePool,
+  type QueryResult,
+} from "./db-transaction.js";
