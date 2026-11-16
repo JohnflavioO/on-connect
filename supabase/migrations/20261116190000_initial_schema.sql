@@ -465,7 +465,7 @@ end
 $$;
 
 -- Separate explicit system policies; session GUCs cannot enable them.
-do $
+do $$
 declare t text;
 begin
   foreach t in array array[
