@@ -195,9 +195,14 @@ select pg_temp.expect_affected(
 select pg_temp.expect_affected(
   format($$delete from onconnect.tenants where id = %L$$, :tenant_b), 0,
   'A cannot delete B''s tenant');
+-- A owns two tenants. Target the specific row and separately verify that
+-- the other tenant is unchanged; a broad UPDATE would legitimately affect both.
 select pg_temp.expect_affected(
-  $$update onconnect.tenants set name = 'Org of A, renamed'$$, 1,
-  'A can update its own tenant');
+  format($update onconnect.tenants set name = 'Org of A, renamed' where id = %L$, :tenant_a), 1,
+  'A can update its selected tenant');
+select pg_temp.expect_count(
+  $select 1 from onconnect.tenants where external_id = 'org-2' and name = 'Second org of A'$,
+  1, 'A second tenant remains unchanged');
 
 select pg_temp.expect_count('select 1 from onconnect.audit_log', 1, 'A reads its own audit entries');
 
