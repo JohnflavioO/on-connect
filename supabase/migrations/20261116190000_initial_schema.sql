@@ -462,7 +462,7 @@ begin
          with check (onconnect.is_system() or client_id = onconnect.current_client_id())', t);
   end loop;
 end
-$;
+$$;
 
 -- Separate explicit system policies; session GUCs cannot enable them.
 do $
@@ -476,7 +476,7 @@ begin
     execute format('create policy system_access on onconnect.%I for all to onconnect_system using (true) with check (true)', t);
   end loop;
 end
-$;
+$$;
 
 alter table onconnect.clients enable row level security;
 alter table onconnect.clients force row level security;
