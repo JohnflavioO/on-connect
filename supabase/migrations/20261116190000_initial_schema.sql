@@ -33,7 +33,7 @@ begin
     create role onconnect_system nologin;
   end if;
 end
-$;
+$$;
 
 grant usage on schema onconnect to onconnect_app, onconnect_system;
 
@@ -50,7 +50,7 @@ create function onconnect.current_client_id() returns uuid
 create function onconnect.is_system() returns boolean
   language sql stable
   set search_path = ''
-  as $ select current_user = 'onconnect_system' $;
+  as $$ select current_user = 'onconnect_system' $$;
 
 create function onconnect.touch_updated_at() returns trigger
   language plpgsql
