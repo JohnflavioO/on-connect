@@ -1,0 +1,111 @@
+# Production stack for the VPS. Run from this directory:
+#   docker compose --env-file .env up -d --build
+#
+# Only Caddy publishes ports. Docker bypasses UFW for published ports, so
+# nothing else may ever get a `ports:` entry here.
+name: on-connect
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-app: &app
+  restart: unless-stopped
+  logging: *logging
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    logging: *logging
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in deploy/.env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    build:
+      context: ..
+      target: api
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      API_HOST: 0.0.0.0
+      API_PORT: "8080"
+      PUBLIC_API_BASE_URL: https://${API_DOMAIN}
+      REDIS_URL: redis://redis:6379
+    networks: [edge, data]
+    stop_grace_period: 20s
+
+  worker:
+    <<: *app
+    build:
+      context: ..
+      target: worker
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-10}
+      REDIS_URL: redis://redis:6379
+    # `edge` gives the worker outbound internet access (Meta Graph API,
+    # customer webhooks). It accepts no inbound connections.
+    networks: [edge, data]
+    stop_grace_period: 35s
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    logging: *logging
+    # AOF so queued jobs survive a restart; noeviction because BullMQ must
+    # never have keys evicted under memory pressure.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 1gb
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis_data:/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+networks:
+  edge:
+  # No route to or from the internet: Redis is reachable only by api/worker.
+  data:
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  redis_data:

@@ -1,0 +1,31 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	request_body {
+		max_size 2MB
+	}
+
+	# Health probes are for the internal network only.
+	@health path /health /health/*
+	respond @health 404
+
+	reverse_proxy api:8080 {
+		health_uri /health/ready
+		health_interval 10s
+		health_timeout 3s
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
