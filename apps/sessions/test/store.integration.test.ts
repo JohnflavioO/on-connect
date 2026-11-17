@@ -75,7 +75,7 @@ describe.skipIf(!enabled)("sessions store as onconnect_system (PostgreSQL 17)", 
 
     const messages = await sql<{ status: string; counterpart: string; client_id: string; text: string }>(
       `SELECT status, counterpart, client_id, payload -> 'content' ->> 'text' AS text
-         FROM onconnect.messages WHERE provider_message_id = 'IN-1'`);
+         FROM onconnect.messages WHERE provider_message_id = 'IN-1' AND client_id = $1`, [CLIENT]);
     expect(messages).toEqual([{ status: "received", counterpart: "5511999999999", client_id: CLIENT, text: "olá" }]);
 
     const events = await sql<{ event_type: string; tenant: string; from: string; occurred_at: Date }>(
@@ -112,7 +112,7 @@ describe.skipIf(!enabled)("sessions store as onconnect_system (PostgreSQL 17)", 
     const events = await sql<{ status: string; ref: string }>(
       `SELECT payload ->> 'status' AS status, payload ->> 'clientReference' AS ref
          FROM onconnect.webhook_events WHERE event_type = 'message.status' AND payload ->> 'messageId' = $1
-        ORDER BY id`, [OUT]);
+        ORDER BY payload ->> 'status' DESC`, [OUT]); // ids are random uuids
     expect(events).toEqual([{ status: "sent", ref: "order-42" }, { status: "read", ref: "order-42" }]);
 
     await outbound.markFailed(OUT, "send_failed", "late failure");

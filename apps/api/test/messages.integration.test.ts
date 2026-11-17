@@ -116,7 +116,7 @@ describe.skipIf(!enabled)("messages (PostgreSQL 17)", () => {
     await sql(
       `INSERT INTO onconnect.messages (client_id, tenant_id, connection_id, direction, status, message_type,
          counterpart, provider_message_id, payload, created_at)
-       SELECT client_id, tenant_id, id, 'inbound', 'received', 'text', '5511988887777', 'IN-1',
+       SELECT client_id, tenant_id, id, 'inbound', 'received', 'text', '5511988887777', 'API-IN-1',
               '{"content":{"type":"text","text":"obrigado"},"pushName":"Ana"}', now() + interval '1 second'
          FROM onconnect.connections WHERE id = $1`, [connA]);
     const page = await call(keyA, "GET", `/v1/connections/${connA}/messages?limit=1`);
