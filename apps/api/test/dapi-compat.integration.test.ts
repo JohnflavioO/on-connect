@@ -103,6 +103,7 @@ describe.skipIf(!enabled)("D-API compatible sessions (PostgreSQL 17)", () => {
       authenticator: createApiKeyAuthenticator({ store: createPostgresCredentialStore(db), pepper: PEPPER }),
       db,
       sessions,
+      compatSendWaitMs: 1_000,
     });
   });
 
@@ -145,9 +146,10 @@ describe.skipIf(!enabled)("D-API compatible sessions (PostgreSQL 17)", () => {
       "SELECT url, payload_format, event_types, tenant_id FROM onconnect.webhook_endpoints WHERE client_id = $1",
       [A],
     );
-    expect(endpoints).toEqual([
-      { url: HOOK, payload_format: "dapi", event_types: ["connection.status"], tenant_id: null },
-    ]);
+    expect(endpoints).toEqual([{
+      url: HOOK, payload_format: "dapi",
+      event_types: ["connection.status", "message.received", "message.status"], tenant_id: null,
+    }]);
   });
 
   it("is idempotent: creating the same session again reuses it", async () => {
@@ -255,6 +257,50 @@ describe.skipIf(!enabled)("D-API compatible sessions (PostgreSQL 17)", () => {
     const bad = await call(keyA, "POST", "/sessions", { sessionId: "bad id!" });
     expect(bad.statusCode).toBe(400);
     expect(bad.json<Envelope>()).toMatchObject({ success: false, statusCode: 400 });
+  });
+
+  it("sends text and answers with the WhatsApp id the message is stored under", async () => {
+    const connectionId = await connectionOf(A, SESSION);
+    await sql("UPDATE onconnect.connections SET status = 'connected' WHERE id = $1", [connectionId]);
+    const response = await call(keyA, "POST", "/messages/send/text", {
+      sessionId: SESSION, to: "5585999990000@s.whatsapp.net", text: "Olá do Tendi",
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json<{ success: boolean; messageId: string; status: string; data: { key: { id: string } } }>();
+    expect(body.success).toBe(true);
+    expect(body.messageId).toMatch(/^3EB0[0-9A-F]{20}$/);
+    expect(body.data.key.id).toBe(body.messageId);
+    // Nothing sends in the test, so after the short wait it is still queued.
+    expect(body.status).toBe("queued");
+
+    const [row] = await sql<{ id: string; counterpart: string; client_id: string; provider_message_id: string }>(
+      "SELECT id, counterpart, client_id, provider_message_id FROM onconnect.messages WHERE provider_message_id = $1",
+      [body.messageId],
+    );
+    expect(row).toMatchObject({ counterpart: "5585999990000", client_id: A });
+    expect(sessions.dispatched).toContain(row?.id);
+  });
+
+  it("reports a send that failed within the wait as an error", async () => {
+    const send = call(keyA, "POST", "/messages/send/text", { sessionId: SESSION, to: "5585999990001", text: "x" });
+    // What the sessions process does when the send fails.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await sql(
+      "UPDATE onconnect.messages SET status = 'failed', error_code = 'send_failed' WHERE counterpart = '5585999990001'",
+    );
+    const response = await send;
+    expect(response.statusCode).toBe(502);
+    expect(response.json<Envelope>()).toMatchObject({ success: false, statusCode: 502 });
+  });
+
+  it("refuses to send through a missing, foreign or disconnected session", async () => {
+    const foreign = await call(keyB, "POST", "/messages/send/text", { sessionId: "nope-1", to: "5585999990000", text: "x" });
+    expect(foreign.json<Envelope>()).toMatchObject({ error: "Session not found", statusCode: 404 });
+    // B's session with the same id exists but is not connected.
+    const notReady = await call(keyB, "POST", "/messages/send/text", { sessionId: SESSION, to: "5585999990000", text: "x" });
+    expect(notReady.json<Envelope>()).toMatchObject({ error: "Session is not connected", statusCode: 400 });
+    const badNumber = await call(keyA, "POST", "/messages/send/text", { sessionId: SESSION, to: "abc-12345", text: "x" });
+    expect(badNumber.statusCode).toBe(400);
   });
 
   it("deletes the session and lets the same id be created again", async () => {

@@ -8,7 +8,7 @@ import {
   type WAVersion,
 } from "baileys";
 import type { Logger } from "pino";
-import { toInbound, toStatus } from "./message-mapping.js";
+import { toInbound, toStatus, type InboundMessage } from "./message-mapping.js";
 import type { CloseReason, SocketFactory } from "./session-manager.js";
 
 function closeReason(statusCode: number | undefined): CloseReason {
@@ -80,9 +80,12 @@ export function createBaileysSocketFactory(
     });
 
     socket.ev.on("messages.upsert", ({ messages, type }) => {
-      // "append" is history and own-device echo; only live messages are forwarded.
-      if (type !== "notify") return;
-      const inbound = messages.map(toInbound).filter((m) => m !== null);
+      // "notify" is live traffic. "append" also carries what the linked
+      // number sends from the phone, so own messages are taken from both;
+      // received ones only from "notify" (an "append" of them is history).
+      // Own messages this process sent are dropped by the store's dedupe.
+      const inbound = messages.map(toInbound)
+        .filter((m): m is InboundMessage => m !== null && (type === "notify" || m.fromMe));
       if (inbound.length > 0) handlers.onMessages(inbound);
     });
 

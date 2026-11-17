@@ -119,6 +119,7 @@ export {
   MessageRejectedError,
   createOutboundText,
   findMessage,
+  generateWhatsappMessageId,
   listMessages,
   toMessage,
   type Message,

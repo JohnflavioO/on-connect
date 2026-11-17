@@ -26,6 +26,8 @@ export interface AppDependencies {
   db: DatabasePool;
   /** Commands and QR codes of the WhatsApp Web sessions process. */
   sessions: SessionGateway;
+  /** D-API layer: how long a send waits for its outcome. Tests shorten it. */
+  compatSendWaitMs?: number;
 }
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
@@ -121,6 +123,7 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
     db: deps.db,
     sessions: deps.sessions,
     webhookSecrets,
+    ...(deps.compatSendWaitMs === undefined ? {} : { sendWaitMs: deps.compatSendWaitMs }),
   });
 
   return app;

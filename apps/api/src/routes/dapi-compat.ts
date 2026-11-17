@@ -1,8 +1,12 @@
 import {
   CompatSessionError,
+  MessageRejectedError,
   checkWebhookUrl,
+  createOutboundText,
   deleteCompatSession,
   findCompatSession,
+  findMessage,
+  generateWhatsappMessageId,
   QR_TTL_SECONDS,
   setCompatWebhook,
   upsertCompatSession,
@@ -35,6 +39,8 @@ export interface DapiCompatRouteOptions {
   db: DatabasePool;
   sessions: SessionGateway;
   webhookSecrets: SecretBox;
+  /** How long a send waits for its outcome before answering "queued". */
+  sendWaitMs?: number;
 }
 
 const SESSION_ID = "^[A-Za-z0-9._-]{1,100}$";
@@ -66,6 +72,12 @@ const URL_ERRORS = {
   private_address: "webhookUrl must point to a public internet host",
 } as const;
 
+const SEND_ERRORS: Record<MessageRejectedError["reason"], [number, string]> = {
+  connection_not_found: [404, "Session not found"],
+  connection_not_ready: [400, "Session is not connected"],
+  tenant_inactive: [403, "Session is suspended"],
+};
+
 const COMPAT_ERRORS: Record<CompatSessionError["reason"], [number, string]> = {
   tenant_inactive: [409, "Session is suspended"],
   limit_reached: [409, "Session limit reached for this sessionId"],
@@ -74,6 +86,7 @@ const COMPAT_ERRORS: Record<CompatSessionError["reason"], [number, string]> = {
 
 export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = async (app, options) => {
   const { authenticator, db, sessions, webhookSecrets } = options;
+  const sendWaitMs = options.sendWaitMs ?? 10_000;
 
   app.decorateRequest("principal", null);
 
@@ -283,6 +296,89 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
       }
       if (!found) return notFound(reply);
       return { success: true, sessionId: request.params.sessionId };
+    },
+  );
+
+  /**
+   * D-API answers a send with the WhatsApp message id, which its client keeps
+   * to match "delivered"/"read" later. The id is generated here and stored
+   * with the message, so the sessions process sends under that same id. The
+   * call waits briefly for the real outcome: a fast failure is reported as
+   * an error; a send still queued (session reconnecting) is accepted and
+   * retried in the background, as the native API does.
+   */
+  app.post<{ Body: { sessionId: string; to: string; text: string } }>(
+    "/messages/send/text",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["sessionId", "to", "text"],
+          properties: {
+            sessionId: { type: "string", pattern: SESSION_ID },
+            to: { type: "string", minLength: 8, maxLength: 64 },
+            text: { type: "string", minLength: 1, maxLength: 4096 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const to = request.body.to.split("@")[0]?.replace(/\D/g, "") ?? "";
+      if (!/^[0-9]{8,15}$/.test(to)) return fail(reply, 400, "to must be a phone number with country code");
+      const principal = principalOf(request);
+      const providerMessageId = generateWhatsappMessageId();
+      let messageId: string;
+      try {
+        messageId = await withClientTransaction(db, principal, async (tx) => {
+          const session = await findCompatSession(tx, request.body.sessionId);
+          if (!session) throw new MessageRejectedError("connection_not_found");
+          const message = await createOutboundText(tx, {
+            connectionId: session.connectionId,
+            to,
+            text: request.body.text,
+            providerMessageId,
+          });
+          return message.id;
+        });
+      } catch (error) {
+        if (error instanceof MessageRejectedError) {
+          const [status, message] = SEND_ERRORS[error.reason];
+          return fail(reply, status, message);
+        }
+        throw error;
+      }
+      try {
+        await sessions.dispatchMessage(messageId);
+      } catch (error) {
+        // Stored with its outbox job: the sessions process replays it.
+        request.log.error({ messageId, err: error }, "failed to dispatch outbound message");
+      }
+
+      const deadline = Date.now() + sendWaitMs;
+      let status = "queued";
+      let errorCode: string | null = null;
+      while (Date.now() < deadline) {
+        const current = await withClientTransaction(db, principal, (tx) => findMessage(tx, messageId));
+        status = current?.status ?? status;
+        errorCode = current?.errorCode ?? null;
+        if (status !== "queued" && status !== "sending") break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (status === "failed") {
+        return reply.code(502).send({
+          success: false,
+          error: `Message could not be sent (${errorCode ?? "send_failed"})`,
+          statusCode: 502,
+          messageId: providerMessageId,
+        });
+      }
+      const key = { id: providerMessageId, remoteJid: `${to}@s.whatsapp.net`, fromMe: true };
+      return {
+        success: true,
+        messageId: providerMessageId,
+        status,
+        data: { messageId: providerMessageId, id: providerMessageId, key, status },
+      };
     },
   );
 

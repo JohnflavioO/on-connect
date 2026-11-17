@@ -21,6 +21,18 @@ describe("toInbound", () => {
       pushName: "Ana",
       timestamp: new Date(1_790_000_000_000),
       content: { type: "text", text: "oi" },
+      fromMe: false,
+    });
+  });
+
+  it("maps a message the linked number sent from the phone, without its push name", () => {
+    const result = toInbound(msg({ fromMe: true }, { conversation: "enviado do celular" }));
+    expect(result).toMatchObject({
+      providerId: "MSG1",
+      counterpart: "5511999999999",
+      fromMe: true,
+      pushName: null,
+      content: { type: "text", text: "enviado do celular" },
     });
   });
 
@@ -41,7 +53,6 @@ describe("toInbound", () => {
   });
 
   it.each([
-    ["own message", msg({ fromMe: true }, { conversation: "x" })],
     ["group", msg({ remoteJid: "1203630@g.us" }, { conversation: "x" })],
     ["status broadcast", msg({ remoteJid: "status@broadcast" }, { conversation: "x" })],
     ["protocol message", msg({}, { protocolMessage: { type: proto.Message.ProtocolMessage.Type.REVOKE } })],

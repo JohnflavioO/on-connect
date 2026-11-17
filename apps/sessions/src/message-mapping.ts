@@ -21,6 +21,12 @@ export interface InboundMessage {
   pushName: string | null;
   timestamp: Date;
   content: MessageContent;
+  /**
+   * Sent by the linked number itself from another device (the phone). The
+   * counterpart is then the recipient. Messages this process sent through
+   * the API are deduplicated by their WhatsApp id when stored.
+   */
+  fromMe: boolean;
 }
 
 export interface StatusUpdate {
@@ -99,13 +105,14 @@ function media(
 }
 
 /**
- * Maps one received message. Returns null for what On Connect does not
- * forward yet: own messages, groups, broadcasts/status, and protocol noise.
+ * Maps one message of a 1:1 chat, received or sent from the phone. Returns
+ * null for what On Connect does not forward yet: groups, broadcasts/status,
+ * and protocol noise (edits, deletions, key distribution).
  */
 export function toInbound(message: WAMessage): InboundMessage | null {
   const key = message.key;
   const jid = key.remoteJid;
-  if (!key.id || !jid || key.fromMe) return null;
+  if (!key.id || !jid) return null;
   if (isJidGroup(jid) || isJidBroadcast(jid) || isJidStatusBroadcast(jid)) return null;
 
   const content = normalizeMessageContent(message.message);
@@ -125,9 +132,11 @@ export function toInbound(message: WAMessage): InboundMessage | null {
     jid,
     counterpart,
     counterpartIsPhone: phone !== null,
-    pushName: message.pushName ?? null,
+    // On an own message the push name is the linked number's, not the contact's.
+    pushName: key.fromMe ? null : message.pushName ?? null,
     timestamp: seconds > 0 ? new Date(seconds * 1000) : new Date(),
     content: described,
+    fromMe: key.fromMe === true,
   };
 }
 
