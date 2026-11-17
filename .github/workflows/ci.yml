@@ -92,3 +92,4 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build --target api -t on-connect-api:ci .
       - run: docker build --target worker -t on-connect-worker:ci .
+      - run: docker build --target sessions -t on-connect-sessions:ci .

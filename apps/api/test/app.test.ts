@@ -8,6 +8,7 @@ import {
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
+import { FakeSessions } from "./support/fake-sessions.js";
 
 const PEPPER = "api-test-pepper-api-test-pepper-api-test";
 const CLIENT_A = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -66,6 +67,7 @@ async function start(
     checkRedis,
     authenticator,
     db: unusedDb,
+    sessions: new FakeSessions(),
   });
   return app;
 }
@@ -234,6 +236,7 @@ describe("API key authentication", () => {
       env: loadApiEnv(baseEnv),
       checkRedis: async () => true,
       db: unusedDb,
+      sessions: new FakeSessions(),
       authenticator: createApiKeyAuthenticator({
         pepper: PEPPER,
         store: {
@@ -283,6 +286,40 @@ describe("tenant routes: rejected before the database", () => {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json<{ error: string }>().error).toBe("bad_request");
+    expect(dbConnects).toBe(before);
+  });
+});
+
+describe("connection routes: rejected before the database", () => {
+  const auth = { authorization: `Bearer ${keyA.key}` };
+  const id = "aaaaaaaa-0000-4000-8000-0000000000c1";
+
+  it("requires an API key", async () => {
+    const instance = await start();
+    const before = dbConnects;
+    const response = await instance.inject({ method: "GET", url: `/v1/connections/${id}/qr` });
+    expect(response.statusCode).toBe(401);
+    expect(dbConnects).toBe(before);
+  });
+
+  it.each([
+    ["non-uuid connection id", "GET", "/v1/connections/not-a-uuid", undefined],
+    ["non-uuid id on qr", "GET", "/v1/connections/123/qr", undefined],
+    ["label too long", "POST", "/v1/tenants/org-1/connections", { label: "x".repeat(101) }],
+    ["unknown field on create", "POST", "/v1/tenants/org-1/connections", { provider: "meta_cloud" }],
+    ["phone with plus sign", "POST", `/v1/connections/${id}/pairing-code`, { phoneNumber: "+5511999999999" }],
+    ["phone too short", "POST", `/v1/connections/${id}/pairing-code`, { phoneNumber: "11999" }],
+    ["missing phone", "POST", `/v1/connections/${id}/pairing-code`, {}],
+  ] as const)("rejects %s with 400", async (_label, method, url, payload) => {
+    const instance = await start();
+    const before = dbConnects;
+    const response = await instance.inject({
+      method,
+      url,
+      headers: auth,
+      ...(payload === undefined ? {} : { payload }),
+    });
+    expect(response.statusCode).toBe(400);
     expect(dbConnects).toBe(before);
   });
 });

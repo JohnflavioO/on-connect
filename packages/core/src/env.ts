@@ -36,9 +36,28 @@ const workerSchema = baseSchema.extend({
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(10),
 });
 
+const sessionsSchema = baseSchema.extend({
+  /**
+   * Connection string for onconnect_system: the sessions process updates
+   * connections of every client, so it cannot run under client-scoped RLS.
+   */
+  SYSTEM_DATABASE_URL: z
+    .string()
+    .regex(/^postgres(ql)?:\/\//, "SYSTEM_DATABASE_URL must start with postgres:// or postgresql://"),
+  /** 32 random bytes, base64. Encrypts WhatsApp Web session keys stored in Redis. */
+  SESSION_STATE_KEY: z
+    .string()
+    .refine((value) => Buffer.from(value, "base64").length === 32, {
+      message: "SESSION_STATE_KEY must be 32 bytes in base64 (openssl rand -base64 32)",
+    }),
+  /** Upper bound on simultaneously open WhatsApp sockets in this process. */
+  SESSIONS_MAX: z.coerce.number().int().min(1).max(2_000).default(200),
+});
+
 export type BaseEnv = z.infer<typeof baseSchema>;
 export type ApiEnv = z.infer<typeof apiSchema>;
 export type WorkerEnv = z.infer<typeof workerSchema>;
+export type SessionsEnv = z.infer<typeof sessionsSchema>;
 
 export class EnvValidationError extends Error {
   constructor(readonly issues: readonly string[]) {
@@ -66,4 +85,8 @@ export function loadApiEnv(source: EnvSource = process.env): ApiEnv {
 
 export function loadWorkerEnv(source: EnvSource = process.env): WorkerEnv {
   return parse(workerSchema, source);
+}
+
+export function loadSessionsEnv(source: EnvSource = process.env): SessionsEnv {
+  return parse(sessionsSchema, source);
 }

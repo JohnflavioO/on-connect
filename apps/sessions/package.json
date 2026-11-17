@@ -1,0 +1,23 @@
+{
+  "name": "@on-connect/sessions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@on-connect/core": "workspace:*",
+    "baileys": "7.0.0-rc14",
+    "bullmq": "^6.7.6",
+    "pino": "^10.4.0"
+  }
+}

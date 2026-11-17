@@ -81,6 +81,26 @@ services:
     networks: [edge, data]
     stop_grace_period: 35s
 
+  # Owns the WhatsApp Web sockets. Exactly one replica: two processes on the
+  # same session would replace each other's connection in a loop.
+  sessions:
+    <<: *app
+    build:
+      context: ..
+      target: sessions
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      REDIS_URL: redis://redis:6379
+      SYSTEM_DATABASE_URL: ${SYSTEM_DATABASE_URL:?set SYSTEM_DATABASE_URL in deploy/.env}
+      SESSION_STATE_KEY: ${SESSION_STATE_KEY:?set SESSION_STATE_KEY in deploy/.env}
+      SESSIONS_MAX: ${SESSIONS_MAX:-200}
+    volumes:
+      - ./supabase-ca.crt:/run/certs/supabase-ca.crt:ro
+    # `edge` for outbound WebSocket traffic to WhatsApp; no inbound ports.
+    networks: [edge, data]
+    stop_grace_period: 15s
+
   redis:
     image: redis:8-alpine
     restart: unless-stopped

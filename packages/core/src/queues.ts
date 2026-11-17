@@ -8,6 +8,8 @@ import type { DefaultJobOptions } from "bullmq";
 export const QUEUE_NAMES = {
   /** Internal plumbing check: proves API -> Redis -> worker end to end. */
   system: "system",
+  /** Commands for the sessions process (start, logout, pairing code). */
+  sessions: "sessions",
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];

@@ -1,9 +1,11 @@
 export {
   EnvValidationError,
   loadApiEnv,
+  loadSessionsEnv,
   loadWorkerEnv,
   type ApiEnv,
   type BaseEnv,
+  type SessionsEnv,
   type WorkerEnv,
 } from "./env.js";
 export {
@@ -65,3 +67,23 @@ export {
   type TenantInput,
   type TenantPage,
 } from "./tenants.js";
+
+export {
+  ConnectionLimitError,
+  createConnection,
+  findConnection,
+  listConnections,
+  retireConnection,
+  type Connection,
+  type ConnectionStatus,
+} from "./connections.js";
+export { createSecretBox, type SecretBox } from "./secret-box.js";
+export {
+  PAIRING_CODE_TTL_SECONDS,
+  QR_TTL_SECONDS,
+  createSessionGateway,
+  sessionKeys,
+  type SessionCommand,
+  type SessionGateway,
+  type SessionGatewayOptions,
+} from "./sessions.js";
