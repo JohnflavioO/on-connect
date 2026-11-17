@@ -59,11 +59,14 @@ services:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in deploy/.env}
       API_KEY_PEPPER: ${API_KEY_PEPPER:?set API_KEY_PEPPER in deploy/.env}
       WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY:?set WEBHOOK_SECRET_KEY in deploy/.env}
+      MEDIA_KEY: ${MEDIA_KEY:?set MEDIA_KEY in deploy/.env}
     volumes:
       # Supabase signs its database certificates with its own root CA, which
       # Node does not trust by default. DATABASE_URL points sslrootcert here
       # so the connection is verified instead of merely encrypted.
       - ./supabase-ca.crt:/run/certs/supabase-ca.crt:ro
+      # Received media written by sessions; the API only reads and serves it.
+      - media_data:/data/media:ro
     networks: [edge, data]
     stop_grace_period: 20s
 
@@ -103,8 +106,13 @@ services:
       SYSTEM_DATABASE_URL: ${SYSTEM_DATABASE_URL:?set SYSTEM_DATABASE_URL in deploy/.env}
       SESSION_STATE_KEY: ${SESSION_STATE_KEY:?set SESSION_STATE_KEY in deploy/.env}
       SESSIONS_MAX: ${SESSIONS_MAX:-200}
+      MEDIA_KEY: ${MEDIA_KEY:?set MEDIA_KEY in deploy/.env}
+      MEDIA_RETENTION_DAYS: ${MEDIA_RETENTION_DAYS:-90}
+      # Media links handed to integrators point at the API.
+      PUBLIC_API_BASE_URL: https://${API_DOMAIN}
     volumes:
       - ./supabase-ca.crt:/run/certs/supabase-ca.crt:ro
+      - media_data:/data/media
     # `edge` for outbound WebSocket traffic to WhatsApp; no inbound ports.
     networks: [edge, data]
     stop_grace_period: 15s
@@ -144,3 +152,6 @@ volumes:
   caddy_data:
   caddy_config:
   redis_data:
+  # Encrypted received media (see packages/core/src/media.ts). Not backed up:
+  # losing it only breaks old media links.
+  media_data:

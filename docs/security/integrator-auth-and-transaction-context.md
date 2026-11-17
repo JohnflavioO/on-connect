@@ -183,3 +183,21 @@ Do not apply migrations to Supabase, merge, or deploy as part of this plan.
 - The D-API webhook URL may carry the integrator's secret in its path (that is
   how D-API webhooks are authenticated). It is stored like any endpoint URL,
   only its host is audited, and it is never logged.
+
+## Media
+
+- Received media (≤ `MEDIA_MAX_BYTES`, 32 MB) is downloaded by `sessions` and
+  stored on the `media_data` volume, AES-256-GCM per file with the file's path
+  as additional data, under a key derived from `MEDIA_KEY`. The API mounts the
+  volume read-only.
+- Links are capability URLs: `/media/<payload>.<HMAC>`, the payload naming the
+  path and type, signed with a second key derived from `MEDIA_KEY`. No API key
+  is needed (integrators fetch them server-side, like D-API links), they cannot
+  be forged or altered, and they only go to the owning client's webhook. The
+  token is removed from API request logs (`redactUrl`) and Caddy access logs.
+- Served with the stored type; anything but common image/audio/video types is
+  `Content-Disposition: attachment`, with `nosniff` and a `default-src 'none'` CSP.
+- Retention deletes whole months older than `MEDIA_RETENTION_DAYS` (90).
+- Outbound media URLs are fetched by `sessions` with the same public-address
+  check as webhooks (resolved at connect time), no redirects, a size cap and a
+  30 s deadline.

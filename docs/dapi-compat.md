@@ -19,13 +19,34 @@ cliente responde "Session not found".
 | --- | --- | --- |
 | 1. Conexão | rotas de sessão e QR; evento `connection.status` | **pronta** |
 | 2. Mensagens | `messages.received` (inclusive enviadas pelo celular), `message.delivered`, `message.read`, `POST /messages/send/text` | **pronta** |
-| 3. Mídia | baixar mídia recebida (`media_url`), enviar imagem, vídeo, áudio, documento; avatar do contato | a fazer |
+| 3. Mídia | baixar mídia recebida (`media_url`), enviar imagem, vídeo, áudio, documento; avatar do contato | **pronta** |
 | 4. Painel super admin | clientes, tenants, conexões, QR, logs de webhook | a fazer |
 
-**Recomendado trocar o Tendi só depois da fase 3.** Com a fase 2, texto vai e
-volta, mas: mídia recebida chega sem `media_url` (o Inbox mostra o tipo, sem o
-arquivo), envio de mídia e avatar respondem 404, e edições de mensagem não são
-repassadas.
+Com as fases 1 a 3 o Tendi pode trocar de provedor. Diferenças que continuam:
+edições e exclusões de mensagem não são repassadas; mídia acima de 32 MB chega
+sem `media_url`; arquivos recebidos ficam disponíveis por 90 dias.
+
+## Mídia (fase 3)
+
+**Recebida:** o processo `sessions` baixa o arquivo do WhatsApp (até 32 MB),
+grava cifrado (AES-256-GCM) no volume `media_data` e manda em `media_url` um
+link `https://<api>/media/<token>`. O token é assinado (HMAC): não dá para
+forjar nem trocar o arquivo, e o link funciona sem API key, como os da D-API,
+porque o integrador busca o arquivo pelo próprio servidor. Quem tiver o link
+baixa o arquivo; ele só vai no webhook do próprio cliente e nunca aparece nos
+logs (API e Caddy). Depois de `MEDIA_RETENTION_DAYS` (90) o arquivo é apagado e
+o link responde 404.
+
+**Envio:** `POST /messages/send/image` (`image`, `caption`), `/video` (`video`,
+`caption`), `/audio` (`audio`, `ptt`) e `/document` (`document`, `fileName`,
+`mimetype`, `caption`), cada um com `sessionId` e `to`. O campo do arquivo é uma
+URL HTTPS pública (a do Storage do Tendi, assinada); o `sessions` baixa (até
+32 MB, só endereço público, sem redirect) e envia. A resposta é igual à do texto,
+mas espera até 25 s, porque a mídia precisa ser baixada e enviada antes.
+
+**Avatar:** `GET /contacts/:telefone/avatar?sessionId=...` responde
+`{ success, data: { profilePictureUrl, url } }`; `null` quando o contato não tem
+foto ou a esconde, 504 se a sessão não responder em 5 s.
 
 ## Rotas (fase 1)
 
@@ -92,7 +113,7 @@ celular (`fromMe: true`, com a outra ponta em `to`):
 
 `type` segue a D-API (`text`, `image`, `video`, `audio`, `ptt`, `document`,
 `sticker`, `location`, `contact`, `reaction`); mídia vem com `media_data`
-(`mimetype`, `filename`, `caption`) e `media_url: null` até a fase 3. Sem o
+(`mimetype`, `filename`, `caption`) e `media_url` (ver Mídia). Sem o
 número (só o id opaco `@lid`), o `jid` vai opaco e o cliente da D-API ignora.
 `message.delivered` / `message.read` levam `{ "message_id": "<id do WhatsApp>" }`.
 Mensagens enviadas pela API não voltam como `messages.received` (a resposta do
@@ -102,7 +123,7 @@ O Tendi autentica pelo segredo no
 caminho da URL; o cabeçalho `OnConnect-Signature` também vai, para quem quiser
 verificar. Novas tentativas e desativação seguem `docs/webhooks.md`.
 
-## Para trocar o Tendi de provedor (de preferência depois da fase 3)
+## Para trocar o Tendi de provedor
 
 No Tendi, `DAPI_BASE_URL` é uma constante em `apps/web/lib/dapi.ts`; ela precisa
 virar variável de ambiente. Então, por ambiente: `DAPI_BASE_URL` com a URL acima

@@ -72,6 +72,7 @@ describe.skipIf(!enabled)("messages (PostgreSQL 17)", () => {
         PUBLIC_API_BASE_URL: "http://localhost:8080",
         DATABASE_URL: "postgresql://unused@localhost/postgres", API_KEY_PEPPER: PEPPER,
         WEBHOOK_SECRET_KEY: Buffer.alloc(32, 7).toString("base64"),
+        MEDIA_KEY: Buffer.alloc(32, 8).toString("base64"),
       }),
       checkRedis: async () => true,
       authenticator: createApiKeyAuthenticator({ store: createPostgresCredentialStore(db), pepper: PEPPER }),

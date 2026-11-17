@@ -7,6 +7,7 @@ const valid = {
   DATABASE_URL: "postgresql://onconnect_app:pw@localhost:5432/postgres",
   API_KEY_PEPPER: "p".repeat(32),
   WEBHOOK_SECRET_KEY: Buffer.alloc(32, 1).toString("base64"),
+  MEDIA_KEY: Buffer.alloc(32, 2).toString("base64"),
 };
 
 describe("loadApiEnv", () => {

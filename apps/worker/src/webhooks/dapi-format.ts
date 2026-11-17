@@ -65,7 +65,8 @@ function receivedData(payload: Record<string, unknown>): Record<string, unknown>
     ...(isMedia
       ? {
           media_data: { mimetype: text(content.mimetype), filename: text(content.fileName), caption },
-          media_url: null,
+          // Null when the file was too large or could not be downloaded.
+          media_url: text(payload.mediaUrl),
         }
       : {}),
     ...(type === "location"

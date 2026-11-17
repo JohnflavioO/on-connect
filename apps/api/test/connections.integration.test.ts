@@ -83,6 +83,7 @@ describe.skipIf(!enabled)("WhatsApp Web connections (PostgreSQL 17)", () => {
         DATABASE_URL: "postgresql://unused@localhost/postgres",
         API_KEY_PEPPER: PEPPER,
         WEBHOOK_SECRET_KEY: Buffer.alloc(32, 7).toString("base64"),
+        MEDIA_KEY: Buffer.alloc(32, 8).toString("base64"),
       }),
       checkRedis: async () => true,
       authenticator: createApiKeyAuthenticator({

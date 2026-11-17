@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Queue } from "bullmq";
 import { DEFAULT_JOB_OPTIONS, QUEUE_NAMES, QUEUE_PREFIX, type OutboundJob } from "./queues.js";
 import type { RedisClient } from "./redis.js";
@@ -12,7 +13,8 @@ import type { RedisClient } from "./redis.js";
 export type SessionCommand =
   | { type: "start"; connectionId: string }
   | { type: "logout"; connectionId: string }
-  | { type: "pairing-code"; connectionId: string; phoneNumber: string };
+  | { type: "pairing-code"; connectionId: string; phoneNumber: string }
+  | { type: "profile-picture"; connectionId: string; phoneNumber: string; requestId: string };
 
 const KEY_PREFIX = `${QUEUE_PREFIX}:wa`;
 
@@ -21,6 +23,8 @@ export const sessionKeys = {
   qr: (connectionId: string) => `${KEY_PREFIX}:qr:${connectionId}`,
   /** Pairing code produced on request, read once by the API. */
   pairingCode: (connectionId: string) => `${KEY_PREFIX}:pairing:${connectionId}`,
+  /** Answer to one profile-picture request: the URL, or "" when there is none. */
+  profilePicture: (requestId: string) => `${KEY_PREFIX}:avatar:${requestId}`,
   /** Hash with the encrypted WhatsApp Web auth state of one connection. */
   authState: (connectionId: string) => `${KEY_PREFIX}:auth:${connectionId}`,
 } as const;
@@ -36,6 +40,15 @@ export interface SessionGateway {
   currentQr(connectionId: string): Promise<string | null>;
   /** Asks the socket for a pairing code and waits for it. Null on timeout. */
   requestPairingCode(connectionId: string, phoneNumber: string): Promise<string | null>;
+  /**
+   * Asks the connection's socket for a contact's profile picture. The URL,
+   * null when the contact shows none, undefined when no answer came in time.
+   */
+  requestProfilePicture(
+    connectionId: string,
+    phoneNumber: string,
+    timeoutMs?: number,
+  ): Promise<string | null | undefined>;
   /**
    * Hands a stored outbound message to the sessions process. The job id is
    * the message id, so a replay from the outbox never sends twice.
@@ -83,6 +96,19 @@ export function createSessionGateway(options: SessionGatewayOptions): SessionGat
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
       }
       return null;
+    },
+
+    async requestProfilePicture(connectionId, phoneNumber, timeoutMs = 5_000) {
+      const requestId = randomUUID();
+      const key = sessionKeys.profilePicture(requestId);
+      await send({ type: "profile-picture", connectionId, phoneNumber, requestId });
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const answer = await redis.getdel(key);
+        if (answer !== null) return answer || null;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, 250)));
+      }
+      return undefined;
     },
 
     dispatchMessage: (messageId) => enqueueOutbound(outbound, messageId),

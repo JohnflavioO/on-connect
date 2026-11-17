@@ -3,8 +3,10 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import sensible from "@fastify/sensible";
 import {
+  createMediaVault,
   createSecretBox,
   loggerOptions,
+  redactUrl,
   type ApiEnv,
   type ApiKeyAuthenticator,
   type DatabasePool,
@@ -13,6 +15,7 @@ import {
 import Fastify, { type FastifyInstance } from "fastify";
 import { dapiCompatRoutes } from "./routes/dapi-compat.js";
 import { healthRoutes } from "./routes/health.js";
+import { mediaRoutes } from "./routes/media.js";
 import { v1Routes } from "./routes/v1.js";
 
 /** External dependencies the API needs. Injected so tests can replace them. */
@@ -37,6 +40,9 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
 
   const app = Fastify({
     logger: loggerOptions({ level: env.LOG_LEVEL, service: "api" }),
+    // Requests are logged by the onResponse hook below instead, so a media
+    // link's token (the credential to that file) never reaches the log.
+    disableRequestLogging: true,
     // Caddy reaches the API over the private Docker network, so forwarded
     // headers are trusted only from loopback and private addresses. A client
     // connecting from anywhere else cannot spoof its IP for rate limiting.
@@ -64,6 +70,17 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
 
   app.addHook("onSend", async (request, reply) => {
     reply.header("x-request-id", request.id);
+  });
+
+  app.addHook("onResponse", async (request, reply) => {
+    request.log.info(
+      {
+        req: { method: request.method, url: redactUrl(request.url), remoteAddress: request.ip },
+        res: { statusCode: reply.statusCode },
+        responseTime: Math.round(reply.elapsedTime),
+      },
+      "request completed",
+    );
   });
 
   await app.register(sensible);
@@ -109,6 +126,11 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
 
   const webhookSecrets = createSecretBox(env.WEBHOOK_SECRET_KEY);
   await app.register(healthRoutes, { prefix: "/health", checkRedis: deps.checkRedis });
+  // Received media, by signed link (no API key; see routes/media.ts).
+  await app.register(mediaRoutes, {
+    prefix: "/media",
+    vault: createMediaVault({ key: env.MEDIA_KEY, dir: env.MEDIA_DIR, publicBaseUrl: env.PUBLIC_API_BASE_URL }),
+  });
   await app.register(v1Routes, {
     prefix: "/v1",
     authenticator: deps.authenticator,

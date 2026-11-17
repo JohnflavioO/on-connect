@@ -95,7 +95,9 @@ describe.skipIf(!enabled)("sessions store as onconnect_system (PostgreSQL 17)", 
     );
     await sql("INSERT INTO onconnect.message_jobs (client_id, message_id) VALUES ($1, $2)", [CLIENT, OUT]);
 
-    expect(await outbound.load(OUT)).toMatchObject({ status: "queued", to: "5511988887777", text: "pedido" });
+    expect(await outbound.load(OUT)).toMatchObject({
+      status: "queued", to: "5511988887777", content: { type: "text", text: "pedido" },
+    });
     await outbound.markSending(OUT, "3EB0OUT");
     await outbound.markSending(OUT, "3EB0OTHER");
     expect((await outbound.load(OUT))?.providerMessageId).toBe("3EB0OUT");

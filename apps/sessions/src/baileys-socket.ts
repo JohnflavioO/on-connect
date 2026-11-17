@@ -1,10 +1,16 @@
+import { MEDIA_CONTENT_TYPES } from "@on-connect/core";
 import {
   Browsers,
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   generateMessageIDV2,
+  getContentType,
   makeCacheableSignalKeyStore,
   makeWASocket,
+  normalizeMessageContent,
+  type AnyMessageContent,
+  type WAMessage,
   type WAVersion,
 } from "baileys";
 import type { Logger } from "pino";
@@ -45,6 +51,7 @@ export async function resolveWaVersion(logger: Logger): Promise<WAVersion | unde
 export function createBaileysSocketFactory(
   logger: Logger,
   version: WAVersion | undefined,
+  options: { maxMediaBytes: number },
 ): SocketFactory {
   return (connectionId, auth, handlers) => {
     // The library is chatty at info level and may log message content.
@@ -79,13 +86,35 @@ export function createBaileysSocketFactory(
       }
     });
 
+    // Media is fetched from WhatsApp's servers on demand; a file declared
+    // larger than the limit is never downloaded.
+    const downloader = (raw: WAMessage) => async (): Promise<Buffer | null> => {
+      const content = normalizeMessageContent(raw.message);
+      const type = content ? getContentType(content) : undefined;
+      // fileLength is a number or a protobuf Long; Number() handles both.
+      const part = content && type ? content[type] as { fileLength?: unknown } | undefined : undefined;
+      if (Number(part?.fileLength ?? 0) > options.maxMediaBytes) return null;
+      const bytes = await downloadMediaMessage(raw, "buffer", {}, {
+        logger: libLogger,
+        reuploadRequest: socket.updateMediaMessage,
+      });
+      return bytes.length > options.maxMediaBytes ? null : bytes;
+    };
+
     socket.ev.on("messages.upsert", ({ messages, type }) => {
       // "notify" is live traffic. "append" also carries what the linked
       // number sends from the phone, so own messages are taken from both;
       // received ones only from "notify" (an "append" of them is history).
       // Own messages this process sent are dropped by the store's dedupe.
-      const inbound = messages.map(toInbound)
-        .filter((m): m is InboundMessage => m !== null && (type === "notify" || m.fromMe));
+      const inbound: InboundMessage[] = [];
+      for (const raw of messages) {
+        const mapped = toInbound(raw);
+        if (!mapped || (type !== "notify" && !mapped.fromMe)) continue;
+        if ((MEDIA_CONTENT_TYPES as readonly string[]).includes(mapped.content.type)) {
+          mapped.downloadMedia = downloader(raw);
+        }
+        inbound.push(mapped);
+      }
       if (inbound.length > 0) handlers.onMessages(inbound);
     });
 
@@ -104,6 +133,38 @@ export function createBaileysSocketFactory(
       async sendText(phoneNumber, text, messageId) {
         const sent = await socket.sendMessage(`${phoneNumber}@s.whatsapp.net`, { text }, { messageId });
         return sent?.key.id ?? messageId;
+      },
+      async sendMedia(phoneNumber, media, messageId) {
+        const caption = media.caption ? { caption: media.caption } : {};
+        const mimetype = media.mimetype ? { mimetype: media.mimetype } : {};
+        let content: AnyMessageContent;
+        if (media.type === "image") content = { image: media.bytes, ...caption, ...mimetype };
+        else if (media.type === "video") content = { video: media.bytes, ...caption, ...mimetype };
+        else if (media.type === "audio") {
+          content = {
+            audio: media.bytes,
+            ptt: media.voice,
+            // A voice note must be Opus in Ogg for WhatsApp to play it as one.
+            mimetype: media.voice ? "audio/ogg; codecs=opus" : media.mimetype ?? "audio/mp4",
+          };
+        } else {
+          content = {
+            document: media.bytes,
+            fileName: media.fileName ?? "arquivo",
+            mimetype: media.mimetype ?? "application/octet-stream",
+            ...caption,
+          };
+        }
+        const sent = await socket.sendMessage(`${phoneNumber}@s.whatsapp.net`, content, { messageId });
+        return sent?.key.id ?? messageId;
+      },
+      async profilePictureUrl(phoneNumber) {
+        try {
+          return (await socket.profilePictureUrl(`${phoneNumber}@s.whatsapp.net`, "image")) ?? null;
+        } catch {
+          // WhatsApp answers "not-authorized" / 404 when the picture is hidden or absent.
+          return null;
+        }
       },
     };
   };

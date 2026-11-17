@@ -98,6 +98,7 @@ describe.skipIf(!enabled)("D-API compatible sessions (PostgreSQL 17)", () => {
         DATABASE_URL: "postgresql://unused@localhost/postgres",
         API_KEY_PEPPER: PEPPER,
         WEBHOOK_SECRET_KEY: Buffer.alloc(32, 7).toString("base64"),
+        MEDIA_KEY: Buffer.alloc(32, 8).toString("base64"),
       }),
       checkRedis: async () => true,
       authenticator: createApiKeyAuthenticator({ store: createPostgresCredentialStore(db), pepper: PEPPER }),
@@ -291,6 +292,52 @@ describe.skipIf(!enabled)("D-API compatible sessions (PostgreSQL 17)", () => {
     const response = await send;
     expect(response.statusCode).toBe(502);
     expect(response.json<Envelope>()).toMatchObject({ success: false, statusCode: 502 });
+  });
+
+  it("sends media by URL in the D-API shapes, storing what the sessions process needs", async () => {
+    const cases = [
+      ["/messages/send/image", { image: "https://files.example.com/a.jpg", caption: "foto" },
+        { type: "image", url: "https://files.example.com/a.jpg", caption: "foto" }],
+      ["/messages/send/video", { video: "https://files.example.com/v.mp4" },
+        { type: "video", url: "https://files.example.com/v.mp4", caption: null }],
+      ["/messages/send/audio", { audio: "https://files.example.com/v.ogg", ptt: true },
+        { type: "audio", url: "https://files.example.com/v.ogg", voice: true }],
+      ["/messages/send/document",
+        { document: "https://files.example.com/p", fileName: "proposta.pdf", mimetype: "application/pdf", caption: "segue" },
+        { type: "document", url: "https://files.example.com/p", fileName: "proposta.pdf", mimetype: "application/pdf", caption: "segue" }],
+    ] as const;
+    for (const [path, body, stored] of cases) {
+      const response = await call(keyA, "POST", path, { sessionId: SESSION, to: "5585999990002", ...body });
+      expect(response.statusCode).toBe(200);
+      const { messageId } = response.json<{ messageId: string }>();
+      const [row] = await sql<{ message_type: string; content: unknown }>(
+        "SELECT message_type, payload -> 'content' AS content FROM onconnect.messages WHERE provider_message_id = $1",
+        [messageId],
+      );
+      expect(row).toEqual({ message_type: stored.type, content: stored });
+    }
+
+    const unsafe = await call(keyA, "POST", "/messages/send/image", {
+      sessionId: SESSION, to: "5585999990002", image: "https://169.254.169.254/latest",
+    });
+    expect(unsafe.statusCode).toBe(400);
+    expect(unsafe.json<Envelope>().error).toBe("media URL must be a public https URL");
+  }, 30_000); // Each media send waits 2.5 s for an outcome nothing produces here.
+
+  it("answers the contact's profile picture", async () => {
+    sessions.pictures.set("5585999990003", "https://pps.whatsapp.net/v/t61/abc.jpg");
+    sessions.pictures.set("5585999990004", null);
+    const found = await call(keyA, "GET", `/contacts/5585999990003/avatar?sessionId=${SESSION}`);
+    expect(found.json<Envelope>()).toEqual({
+      success: true,
+      data: { profilePictureUrl: "https://pps.whatsapp.net/v/t61/abc.jpg", url: "https://pps.whatsapp.net/v/t61/abc.jpg" },
+    });
+    const none = await call(keyA, "GET", `/contacts/5585999990004/avatar?sessionId=${SESSION}`);
+    expect(none.json<Envelope>().data).toEqual({ profilePictureUrl: null, url: null });
+    const slow = await call(keyA, "GET", `/contacts/5585999990005/avatar?sessionId=${SESSION}`);
+    expect(slow.statusCode).toBe(504);
+    const foreign = await call(keyB, "GET", `/contacts/5585999990003/avatar?sessionId=nope-1`);
+    expect(foreign.statusCode).toBe(404);
   });
 
   it("refuses to send through a missing, foreign or disconnected session", async () => {

@@ -114,12 +114,37 @@ export function generateWhatsappMessageId(): string {
   return `3EB0${randomBytes(10).toString("hex").toUpperCase()}`;
 }
 
+/**
+ * What an outbound message carries. Media is given as a public HTTPS URL
+ * the sessions process downloads (size-capped, public addresses only) right
+ * before sending; the URL is kept with the message, the file is not.
+ */
+export type OutboundContent =
+  | { type: "text"; text: string }
+  | { type: "image" | "video"; url: string; caption?: string | null }
+  | { type: "audio"; url: string; voice?: boolean }
+  | { type: "document"; url: string; fileName?: string | null; mimetype?: string | null; caption?: string | null };
+
 export async function createOutboundText(
   tx: ClientTransaction,
   input: {
     connectionId: string;
     to: string;
     text: string;
+    clientReference?: string | null;
+    providerMessageId?: string | null;
+  },
+): Promise<Message> {
+  const { text, ...rest } = input;
+  return createOutboundMessage(tx, { ...rest, content: { type: "text", text } });
+}
+
+export async function createOutboundMessage(
+  tx: ClientTransaction,
+  input: {
+    connectionId: string;
+    to: string;
+    content: OutboundContent;
     clientReference?: string | null;
     providerMessageId?: string | null;
   },
@@ -154,15 +179,16 @@ export async function createOutboundText(
     `INSERT INTO onconnect.messages
        (client_id, tenant_id, connection_id, direction, status, message_type, counterpart,
         client_reference, payload, provider_message_id)
-     VALUES (onconnect.current_client_id(), $1, $2, 'outbound', 'queued', 'text', $3, $4, $5, $6)
+     VALUES (onconnect.current_client_id(), $1, $2, 'outbound', 'queued', $7, $3, $4, $5, $6)
      RETURNING id`,
     [
       row.tenant_id,
       row.id,
       input.to,
       input.clientReference ?? null,
-      JSON.stringify({ content: { type: "text", text: input.text } }),
+      JSON.stringify({ content: input.content }),
       input.providerMessageId ?? null,
+      input.content.type,
     ],
   );
   const id = inserted.rows[0]?.id;

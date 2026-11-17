@@ -28,6 +28,14 @@ export const REDACTED_LOG_PATHS: readonly string[] = [
   ].flatMap((key) => [key, `*.${key}`, `*.*.${key}`]),
 ];
 
+/**
+ * Request paths that are credentials themselves (media capability links)
+ * are logged without their token.
+ */
+export function redactUrl(url: string): string {
+  return url.replace(/^\/media\/[^/?#]+/, "/media/[REDACTED]");
+}
+
 export interface LoggerConfig {
   level: string;
   /** Process name attached to every line, e.g. "api" or "worker". */
