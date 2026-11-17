@@ -128,6 +128,53 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
     auditConnection: (admin: Admin, clientId: string, connectionId: string, action: string) =>
       audit(admin, clientId, action, "connection", connectionId),
 
+    /** Status changes of one connection, newest first (from connection.status events). */
+    connectionHistory(id: string) {
+      return run<{ status: string; previous_status: string | null; reason: string | null; at: Date }>(
+        `SELECT payload ->> 'status' AS status, payload ->> 'previousStatus' AS previous_status,
+                payload ->> 'reason' AS reason, created_at AS at
+           FROM onconnect.webhook_events
+          WHERE connection_id = $1 AND event_type = 'connection.status'
+          ORDER BY created_at DESC, id DESC
+          LIMIT 50`,
+        [id],
+      );
+    },
+
+    /** Latest webhook deliveries of events produced by one connection. */
+    connectionDeliveries(id: string) {
+      return run<{
+        id: string; event_type: string; status: string; attempts: number; last_status_code: number | null;
+        last_error: string | null; updated_at: Date;
+      }>(
+        `SELECT d.id, ev.event_type, d.status, d.attempts, d.last_status_code, d.last_error, d.updated_at
+           FROM onconnect.webhook_deliveries d
+           JOIN onconnect.webhook_events ev ON ev.id = d.event_id
+          WHERE ev.connection_id = $1
+          ORDER BY d.updated_at DESC, d.id DESC
+          LIMIT 20`,
+        [id],
+      );
+    },
+
+    /**
+     * Retires the connection (soft delete, like the API does); the caller then
+     * logs the socket out. The status change emits connection.status.
+     */
+    async deleteConnection(admin: Admin, id: string): Promise<boolean> {
+      const [row] = await run<{ client_id: string; session_key: string | null }>(
+        `UPDATE onconnect.connections
+            SET deleted_at = now(), status = 'disconnected', status_reason = 'deleted_by_admin',
+                status_changed_at = now()
+          WHERE id = $1 AND deleted_at IS NULL
+          RETURNING client_id, session_key`,
+        [id],
+      );
+      if (!row) return false;
+      await audit(admin, row.client_id, "connection.deleted", "connection", id, { sessionId: row.session_key });
+      return true;
+    },
+
     clients() {
       return run<{
         id: string; slug: string; name: string; status: string; created_at: Date;
@@ -204,6 +251,52 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
       );
       if (!row) return false;
       await audit(admin, clientId, "api_credential.revoked", "api_credential", keyId, { keyPrefix: row.key_prefix });
+      return true;
+    },
+
+    async webhookEndpoint(id: string) {
+      const [row] = await run<{
+        id: string; client_id: string; client_slug: string; tenant: string | null; url: string;
+        payload_format: string; event_types: string[]; status: string; consecutive_failures: number;
+        failing_since: Date | null; disabled_at: Date | null; created_at: Date; queued: string;
+      }>(
+        `SELECT e.id, e.client_id, cl.slug AS client_slug, t.external_id AS tenant, e.url, e.payload_format,
+                e.event_types, e.status, e.consecutive_failures, e.failing_since, e.disabled_at, e.created_at,
+                (SELECT count(*) FROM onconnect.webhook_deliveries d
+                  WHERE d.endpoint_id = e.id AND d.status IN ('pending', 'failed')) AS queued
+           FROM onconnect.webhook_endpoints e
+           JOIN onconnect.clients cl ON cl.id = e.client_id
+           LEFT JOIN onconnect.tenants t ON t.id = e.tenant_id
+          WHERE e.id = $1`,
+        [id],
+      );
+      return row ?? null;
+    },
+
+    /** Paused endpoints keep collecting deliveries and get them on reactivation. */
+    async pauseEndpoint(admin: Admin, id: string): Promise<boolean> {
+      const [row] = await run<{ client_id: string }>(
+        `UPDATE onconnect.webhook_endpoints SET status = 'paused'
+          WHERE id = $1 AND status = 'active' RETURNING client_id`,
+        [id],
+      );
+      if (!row) return false;
+      await audit(admin, row.client_id, "webhook_endpoint.paused", "webhook_endpoint", id);
+      return true;
+    },
+
+    /**
+     * Event subscription of a native endpoint ([] = every event). D-API
+     * endpoints are refused: the compatible session routes reset their list.
+     */
+    async setEndpointEvents(admin: Admin, id: string, eventTypes: string[]): Promise<boolean> {
+      const [row] = await run<{ client_id: string }>(
+        `UPDATE onconnect.webhook_endpoints SET event_types = $2::text[]
+          WHERE id = $1 AND payload_format = 'onconnect' RETURNING client_id`,
+        [id, eventTypes],
+      );
+      if (!row) return false;
+      await audit(admin, row.client_id, "webhook_endpoint.events_changed", "webhook_endpoint", id, { eventTypes });
       return true;
     },
 

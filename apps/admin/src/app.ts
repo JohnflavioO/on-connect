@@ -1,10 +1,12 @@
 import { timingSafeEqual } from "node:crypto";
-import { QR_TTL_SECONDS, loggerOptions, type SessionGateway } from "@on-connect/core";
+import { WEBHOOK_EVENT_TYPES, loggerOptions, type SessionGateway } from "@on-connect/core";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import QRCode from "qrcode";
 import { CSS, JS } from "./assets.js";
 import { connectionTable, dashboardView } from "./dashboard.js";
-import { badge, formatDate, formatNumber, formatPhone, html, icon, maskUrl, page } from "./html.js";
+import { badge, formatDate, formatNumber, html, icon, maskUrl, page } from "./html.js";
+import { CONNECTION_TABS, connectionPage, type ConnectionTab } from "./connection-page.js";
+import { endpointPage } from "./endpoint-page.js";
 import { monitoringView } from "./monitoring.js";
 import {
   DELIVERY_PAGE_SIZE,
@@ -172,44 +174,33 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     });
   });
 
-  app.get<{ Params: { id: string } }>("/admin/connections/:id", async (request, reply) => {
+  app.get<{ Params: { id: string }; Querystring: { tab?: string } }>("/admin/connections/:id", async (request, reply) => {
     if (!UUID.test(request.params.id)) return notFound(reply, request, "Conexão");
     const row = await queries.connection(request.params.id);
     if (!row) return notFound(reply, request, "Conexão");
-    const action = (path: string, label: string, confirm: string, tone = "") => html`
-      <form class="inline" method="post" action="/admin/connections/${row.id}/${path}" data-confirm="${confirm}">
-        <button type="submit" class="${tone}">${label}</button>
-      </form>`;
+    const tab: ConnectionTab = (CONNECTION_TABS as readonly string[]).includes(request.query.tab ?? "")
+      ? request.query.tab as ConnectionTab : "conexao";
+    const [history, deliveries] = tab === "historico"
+      ? await Promise.all([queries.connectionHistory(row.id), queries.connectionDeliveries(row.id)])
+      : [undefined, undefined];
     return show(reply, request, {
       title: row.session_key ?? row.tenant,
       active: "connections",
       notice: noticeOf(request),
-      body: html`
-        <div class="grid-2">
-          <div class="panel">
-            <table>
-              <tr><th>Status</th><td>${badge(row.status)} <span class="muted mono">${row.status_reason ?? ""}</span></td></tr>
-              <tr><th>Número</th><td>${formatPhone(row.display_phone_number)} <span class="muted">${row.verified_name ?? ""}</span></td></tr>
-              <tr><th>Cliente</th><td><a href="/admin/clients/${row.client_id}">${row.client_slug}</a></td></tr>
-              <tr><th>Organização</th><td class="mono">${row.tenant}</td></tr>
-              <tr><th>Sessão</th><td class="mono">${row.session_key ?? "—"}</td></tr>
-              <tr><th>Conexão</th><td class="mono">${row.id}</td></tr>
-              <tr><th>Desde</th><td>${formatDate(row.status_changed_at)}</td></tr>
-              <tr><th>7 dias</th><td>${formatNumber(row.sent7)} enviadas · ${formatNumber(row.received7)} recebidas</td></tr>
-            </table>
-            <div class="toolbar" style="margin-top:14px">
-              ${action("restart", "Reiniciar / gerar QR", "Reiniciar esta conexão?")}
-              ${action("logout", "Desconectar número", "Desconectar o WhatsApp deste número? Será preciso ler o QR de novo.", "danger")}
-            </div>
-          </div>
-          <div class="panel">
-            <h2 style="margin-top:0">QR code</h2>
-            <p class="muted">Status: <strong data-qr-status>${badge(row.status)}</strong></p>
-            <div class="qr" data-qr-url="/admin/connections/${row.id}/qr.json"><div class="empty">Carregando…</div></div>
-            <p class="muted">Atualiza sozinho. O QR expira em cerca de ${QR_TTL_SECONDS} s; se sumir, use "Reiniciar".</p>
-          </div>
-        </div>`,
+      body: connectionPage(row, tab, { ...(history ? { history } : {}), ...(deliveries ? { deliveries } : {}) }),
     });
+  });
+
+  // Deleting needs the word typed in the form, on top of the browser confirm.
+  app.post<{ Params: { id: string }; Body: { confirm?: string } }>("/admin/connections/:id/delete", async (request, reply) => {
+    const { id } = request.params;
+    if (!UUID.test(id)) return reply.code(404).send("Not found");
+    if (request.body.confirm !== "EXCLUIR") {
+      return back(reply, `/admin/connections/${id}`, "Para excluir, digite EXCLUIR no campo de confirmação.");
+    }
+    if (!(await queries.deleteConnection(adminOf(request), id))) return reply.code(404).send("Not found");
+    await sessions.logout(id);
+    return back(reply, "/admin/connections", "Conexão excluída. O número foi desconectado.");
   });
 
   app.get<{ Params: { id: string } }>("/admin/connections/:id/qr.json", async (request, reply) => {
@@ -421,11 +412,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
                 <td>${badge(endpoint.status)}</td>
                 <td>${formatNumber(endpoint.consecutive_failures)}${endpoint.failing_since
                   ? html`<div class="muted">desde ${formatDate(endpoint.failing_since)}</div>` : ""}</td>
-                <td>${endpoint.status === "active" ? "" : html`
-                  <form class="inline" method="post" action="/admin/webhooks/endpoints/${endpoint.id}/reactivate"
-                    data-confirm="Reativar este endpoint e reenviar o que estava esperando?">
-                    <button type="submit">Reativar</button>
-                  </form>`}</td>
+                <td><a class="button compact" href="/admin/webhooks/endpoints/${endpoint.id}">Gerenciar</a></td>
               </tr>`)}
             </tbody>
           </table></div>
@@ -473,10 +460,48 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     return back(reply, "/admin/webhooks", done ? "Entrega colocada para reenvio." : "Essa entrega não pode ser reenviada.");
   });
 
+  app.get<{ Params: { id: string } }>("/admin/webhooks/endpoints/:id", async (request, reply) => {
+    if (!UUID.test(request.params.id)) return notFound(reply, request, "Endpoint");
+    const endpoint = await queries.webhookEndpoint(request.params.id);
+    if (!endpoint) return notFound(reply, request, "Endpoint");
+    return show(reply, request, {
+      title: "Endpoint de webhook", active: "webhooks", notice: noticeOf(request),
+      body: endpointPage(endpoint),
+    });
+  });
+
+  app.post<{ Params: { id: string } }>("/admin/webhooks/endpoints/:id/pause", async (request, reply) => {
+    if (!UUID.test(request.params.id)) return reply.code(404).send("Not found");
+    const done = await queries.pauseEndpoint(adminOf(request), request.params.id);
+    return back(reply, `/admin/webhooks/endpoints/${request.params.id}`,
+      done ? "Endpoint pausado. As entregas ficam guardadas até reativar." : "Só um endpoint ativo pode ser pausado.");
+  });
+
+  // Checkboxes arrive as event_<type>=on; "all" means every event ([]).
+  app.post<{ Params: { id: string }; Body: Record<string, string | undefined> }>(
+    "/admin/webhooks/endpoints/:id/events",
+    async (request, reply) => {
+      const { id } = request.params;
+      if (!UUID.test(id)) return reply.code(404).send("Not found");
+      const location = `/admin/webhooks/endpoints/${id}`;
+      const chosen = request.body.mode === "all"
+        ? []
+        : WEBHOOK_EVENT_TYPES.filter((type) => request.body[`event_${type}`] === "on");
+      if (request.body.mode !== "all" && chosen.length === 0) {
+        return back(reply, location, "Escolha pelo menos um evento, ou marque \"Todos os eventos\".");
+      }
+      const done = await queries.setEndpointEvents(adminOf(request), id, chosen);
+      return back(reply, location, done
+        ? "Eventos atualizados."
+        : "Os eventos deste endpoint são definidos pela camada de compatibilidade e não podem ser mudados aqui.");
+    },
+  );
+
   app.post<{ Params: { id: string } }>("/admin/webhooks/endpoints/:id/reactivate", async (request, reply) => {
     if (!UUID.test(request.params.id)) return reply.code(404).send("Not found");
     const done = await queries.reactivateEndpoint(adminOf(request), request.params.id);
-    return back(reply, "/admin/webhooks", done ? "Endpoint reativado." : "O endpoint já estava ativo.");
+    return back(reply, `/admin/webhooks/endpoints/${request.params.id}`,
+      done ? "Endpoint reativado. As entregas que esperavam saem agora." : "O endpoint já estava ativo.");
   });
 
   app.setNotFoundHandler((request, reply) => {
