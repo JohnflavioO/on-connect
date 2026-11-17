@@ -80,7 +80,10 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
   app.addHook("onSend", async (_request, reply, payload) => {
     reply.header("content-security-policy", CSP);
     reply.header("x-content-type-options", "nosniff");
-    reply.header("referrer-policy", "no-referrer");
+    // no-referrer makes browsers send Origin: null on native form POSTs,
+    // which our CSRF guard correctly rejects. Keep origins on same-site forms
+    // without disclosing the panel URL to external sites.
+    reply.header("referrer-policy", "same-origin");
     reply.header("cache-control", "no-store");
     reply.header("x-frame-options", "DENY");
     return payload;
