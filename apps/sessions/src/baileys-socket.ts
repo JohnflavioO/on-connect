@@ -2,11 +2,13 @@ import {
   Browsers,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  generateMessageIDV2,
   makeCacheableSignalKeyStore,
   makeWASocket,
   type WAVersion,
 } from "baileys";
 import type { Logger } from "pino";
+import { toInbound, toStatus } from "./message-mapping.js";
 import type { CloseReason, SocketFactory } from "./session-manager.js";
 
 function closeReason(statusCode: number | undefined): CloseReason {
@@ -77,12 +79,29 @@ export function createBaileysSocketFactory(
       }
     });
 
+    socket.ev.on("messages.upsert", ({ messages, type }) => {
+      // "append" is history and own-device echo; only live messages are forwarded.
+      if (type !== "notify") return;
+      const inbound = messages.map(toInbound).filter((m) => m !== null);
+      if (inbound.length > 0) handlers.onMessages(inbound);
+    });
+
+    socket.ev.on("messages.update", (updates) => {
+      const statuses = updates.map(toStatus).filter((s) => s !== null);
+      if (statuses.length > 0) handlers.onStatus(statuses);
+    });
+
     return {
       logout: () => socket.logout(),
       end: () => {
         void socket.end(undefined);
       },
       requestPairingCode: (phoneNumber) => socket.requestPairingCode(phoneNumber),
+      newMessageId: () => generateMessageIDV2(socket.user?.id),
+      async sendText(phoneNumber, text, messageId) {
+        const sent = await socket.sendMessage(`${phoneNumber}@s.whatsapp.net`, { text }, { messageId });
+        return sent?.key.id ?? messageId;
+      },
     };
   };
 }

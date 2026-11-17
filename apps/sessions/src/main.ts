@@ -4,15 +4,20 @@ import {
   createLogger,
   createPostgresPool,
   createRedis,
+  OUTBOUND_ATTEMPTS,
+  createOutboundQueue,
   createSecretBox,
+  enqueueOutbound,
   loadSessionsEnv,
+  type OutboundJob,
   type SessionCommand,
 } from "@on-connect/core";
 import { Worker } from "bullmq";
 import { createRedisAuthState } from "./auth-state.js";
 import { createBaileysSocketFactory, resolveWaVersion } from "./baileys-socket.js";
 import { SessionManager } from "./session-manager.js";
-import { createPostgresSessionStore } from "./store.js";
+import { createOutboundProcessor } from "./outbound.js";
+import { createPostgresOutboundStore, createPostgresSessionStore } from "./store.js";
 
 const SHUTDOWN_TIMEOUT_MS = 20_000;
 
@@ -64,6 +69,47 @@ async function main(): Promise<void> {
     logger.error({ jobId: job?.id, command: job?.data.type, err: error }, "session command failed");
   });
 
+  // Outbound sends live here because this process owns the sockets.
+  const outboundConnection = createRedis({
+    url: env.REDIS_URL,
+    connectionName: "sessions:outbound",
+    logger,
+  });
+  const processOutbound = createOutboundProcessor({
+    store: createPostgresOutboundStore(db),
+    sender: manager,
+    logger,
+  });
+  const outboundWorker = new Worker<OutboundJob>(
+    QUEUE_NAMES.outbound,
+    (job) => processOutbound({
+      messageId: job.data.messageId,
+      attempt: job.attemptsMade + 1,
+      maxAttempts: job.opts.attempts ?? OUTBOUND_ATTEMPTS,
+    }),
+    { connection: outboundConnection, prefix: QUEUE_PREFIX, concurrency: 10 },
+  );
+  outboundWorker.on("failed", (job, error) => {
+    logger.warn({ messageId: job?.data.messageId, attempt: job?.attemptsMade, err: error.message },
+      "outbound attempt failed");
+  });
+
+  // Transactional outbox replay: a message whose queue job was lost (Redis
+  // restart, API crash after commit) is enqueued again. The job id is the
+  // message id, so a job that still exists is not duplicated.
+  const outboundQueue = createOutboundQueue(redis);
+  const replay = async (): Promise<void> => {
+    try {
+      const stale = await createPostgresOutboundStore(db).stalePending(120);
+      for (const messageId of stale) await enqueueOutbound(outboundQueue, messageId);
+      if (stale.length > 0) logger.info({ count: stale.length }, "replayed outbound messages");
+    } catch (error) {
+      logger.error({ err: error }, "outbox replay failed");
+    }
+  };
+  const replayTimer = setInterval(() => void replay(), 60_000);
+  replayTimer.unref();
+
   let shuttingDown = false;
   const shutdown = (signal: string): void => {
     if (shuttingDown) return;
@@ -76,13 +122,13 @@ async function main(): Promise<void> {
     forced.unref();
 
     // Sockets are closed, not logged out, so the next boot resumes them.
-    worker
-      .close()
+    clearInterval(replayTimer);
+    Promise.all([worker.close(), outboundWorker.close(), outboundQueue.close()])
       .then(() => {
         manager.stopAll();
       })
       .then(() => db.close())
-      .then(() => Promise.all([redis.quit(), commandConnection.quit()]))
+      .then(() => Promise.all([redis.quit(), commandConnection.quit(), outboundConnection.quit()]))
       .then(() => process.exit(0))
       .catch((error: unknown) => {
         logger.error({ err: error }, "error during shutdown");
@@ -96,8 +142,9 @@ async function main(): Promise<void> {
     shutdown("SIGINT");
   });
 
-  await worker.waitUntilReady();
+  await Promise.all([worker.waitUntilReady(), outboundWorker.waitUntilReady()]);
   const restored = await manager.restoreAll();
+  void replay();
   logger.info({ restored, max: env.SESSIONS_MAX }, "sessions ready");
 }
 

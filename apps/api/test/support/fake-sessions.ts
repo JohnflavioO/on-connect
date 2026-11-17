@@ -5,6 +5,7 @@ export class FakeSessions implements SessionGateway {
   readonly started: string[] = [];
   readonly loggedOut: string[] = [];
   readonly pairingRequests: Array<[string, string]> = [];
+  readonly dispatched: string[] = [];
   qr = new Map<string, string>();
   pairingCode: string | null = "ABCD-1234";
 
@@ -20,5 +21,8 @@ export class FakeSessions implements SessionGateway {
   async requestPairingCode(connectionId: string, phoneNumber: string) {
     this.pairingRequests.push([connectionId, phoneNumber]);
     return this.pairingCode;
+  }
+  async dispatchMessage(messageId: string) {
+    this.dispatched.push(messageId);
   }
 }

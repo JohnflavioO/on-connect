@@ -20,6 +20,7 @@ export {
   DEFAULT_JOB_OPTIONS,
   QUEUE_NAMES,
   QUEUE_PREFIX,
+  type OutboundJob,
   type QueueName,
   type SystemPingJob,
 } from "./queues.js";
@@ -87,3 +88,16 @@ export {
   type SessionGateway,
   type SessionGatewayOptions,
 } from "./sessions.js";
+
+export {
+  MessageRejectedError,
+  createOutboundText,
+  findMessage,
+  listMessages,
+  toMessage,
+  type Message,
+  type MessageContent,
+  type MessagePage,
+  type MessageStatus,
+} from "./messages.js";
+export { OUTBOUND_ATTEMPTS, createOutboundQueue, enqueueOutbound } from "./sessions.js";

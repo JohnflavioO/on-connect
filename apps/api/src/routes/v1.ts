@@ -2,6 +2,7 @@ import type { ApiKeyAuthenticator, DatabasePool, SessionGateway } from "@on-conn
 import type { FastifyPluginAsync } from "fastify";
 import { principalOf, requireApiKey } from "../plugins/api-key-auth.js";
 import { connectionRoutes } from "./connections.js";
+import { messageRoutes } from "./messages.js";
 import { tenantRoutes } from "./tenants.js";
 
 export interface V1RouteOptions {
@@ -26,4 +27,5 @@ export const v1Routes: FastifyPluginAsync<V1RouteOptions> = async (app, options)
 
   await app.register(tenantRoutes, { prefix: "/tenants", db: options.db });
   await app.register(connectionRoutes, { db: options.db, sessions: options.sessions });
+  await app.register(messageRoutes, { db: options.db, sessions: options.sessions });
 };

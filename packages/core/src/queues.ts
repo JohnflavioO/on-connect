@@ -10,7 +10,14 @@ export const QUEUE_NAMES = {
   system: "system",
   /** Commands for the sessions process (start, logout, pairing code). */
   sessions: "sessions",
+  /** Outbound messages, consumed by the sessions process (it owns the sockets). */
+  outbound: "outbound",
 } as const;
+
+/** Payload of an outbound job: everything else is read from the database. */
+export interface OutboundJob {
+  messageId: string;
+}
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 
