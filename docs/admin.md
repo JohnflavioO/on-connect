@@ -22,6 +22,32 @@ e apresenta o instante em que a página foi consultada. Atualize a página ou us
   de status e slug do cliente. A consulta mantém o limite de 500 registros.
   Cada linha abre a página existente com QR, reinício e desconexão auditados.
 
+### Página da conexão (abas)
+
+Inspirada nas configurações de instância da D-API, `/admin/connections/:id`:
+
+- **Conexão**: status com motivo, número, cliente, organização, QR que atualiza
+  sozinho e as ações **Reiniciar** e **Desconectar**. Na *Zona de perigo*,
+  **Excluir conexão**: exige digitar `EXCLUIR`, desconecta o número e remove a
+  conexão das listas (exclusão lógica: mensagens e auditoria ficam). Gera o
+  evento `connection.status` e a auditoria `connection.deleted`.
+- **Histórico**: mudanças de status (de → para, motivo, quando) vindas dos eventos
+  `connection.status`, e as últimas 20 entregas de webhook daquela sessão.
+- **Desenvolvedor**: Session ID (camada D-API), id da conexão, organização e
+  cliente, com botão Copiar. A API key **não** aparece: o On Connect guarda só um
+  resumo cifrado; ela é mostrada uma vez, ao ser criada.
+- **Configurações**: ignorar grupos e status (sempre ligado). Rejeitar chamadas e
+  marcar como lido ao responder estão marcados como próxima etapa.
+
+### Endpoint de webhook
+
+Em **Webhooks**, o botão **Gerenciar** abre `/admin/webhooks/endpoints/:id`:
+destino (sem o caminho), formato, fila, falhas e as ações **Pausar** (as entregas
+ficam guardadas) ou **Reativar** (zera as falhas e reenvia o que esperava).
+Endpoints **On Connect** escolhem os eventos (todos ou alguns). Nos de
+**Compatibilidade (D-API)** os eventos são fixos: a camada compatível os redefine
+quando o integrador conecta uma sessão (e também volta a ativá-los).
+
 ### Monitoramento
 
 `/admin/monitoring` responde "a plataforma está saudável agora?", no estilo do

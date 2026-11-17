@@ -10,6 +10,7 @@ const ORIGIN = "https://onconnect.example.com";
 const CONN = "11111111-1111-4111-8111-111111111111";
 const CLIENT = "22222222-2222-4222-8222-222222222222";
 const KEY = "33333333-3333-4333-8333-333333333333";
+const NATIVE = "44444444-4444-4444-8444-444444444444";
 
 const connection = {
   id: CONN, session_key: "tendi-org-1", status: "connecting", status_reason: "waiting_for_scan",
@@ -48,6 +49,26 @@ function fakeQueries() {
     deliveries: vi.fn<AdminQueries["deliveries"]>(async () => []),
     resendDelivery: vi.fn(async () => true),
     reactivateEndpoint: vi.fn(async () => true),
+    connectionHistory: vi.fn(async () => [
+      { status: "connected", previous_status: "connecting", reason: null, at: new Date("2026-11-17T12:00:00Z") },
+      { status: "disconnected", previous_status: "connected", reason: "logged_out", at: new Date("2026-11-17T11:00:00Z") },
+    ]),
+    connectionDeliveries: vi.fn(async () => [{
+      id: KEY, event_type: "message.received", status: "delivered", attempts: 1, last_status_code: 200,
+      last_error: null, updated_at: new Date("2026-11-17T12:01:00Z"),
+    }]),
+    deleteConnection: vi.fn(async () => true),
+    webhookEndpoint: vi.fn(async (id: string) => id === KEY || id === NATIVE
+      ? {
+          id, client_id: CLIENT, client_slug: "tendi", tenant: null,
+          url: "https://tendi.example.com/api/webhooks/dapi/s3cr3t", payload_format: id === KEY ? "dapi" : "onconnect",
+          event_types: id === KEY ? ["connection.status", "message.received", "message.status"] : ["message.received"],
+          status: "active", consecutive_failures: 0, failing_since: null, disabled_at: null,
+          created_at: new Date(), queued: "0",
+        }
+      : null),
+    pauseEndpoint: vi.fn(async () => true),
+    setEndpointEvents: vi.fn(async (_admin: unknown, id: string) => id === NATIVE),
     monitoring: vi.fn<AdminQueries["monitoring"]>(async () => ({
       totals: healthyTotals({ live: "2", connected: "1", dead: "1", delivered: "40", disabled_endpoints: "1" }),
       buckets: [
@@ -226,7 +247,9 @@ describe("pages", () => {
     const response = await (await start()).inject({ method: "GET", url: "/admin/webhooks", headers: viaCaddy });
     expect(response.body).toContain("https://tendi.example.com/…");
     expect(response.body).not.toContain("s3cr3t");
-    expect(response.body).toContain("Reativar");
+    // Pause / reactivate / events live on the endpoint's own page now.
+    expect(response.body).toContain(`/admin/webhooks/endpoints/${KEY}`);
+    expect(response.body).toContain("Gerenciar");
   });
 
   it("shows 25 deliveries and carries active filters to both pagination links", async () => {
@@ -264,6 +287,90 @@ describe("pages", () => {
     expect((await instance.inject({ method: "GET", url: "/admin/connections/not-a-uuid", headers: viaCaddy })).statusCode).toBe(404);
     expect((await instance.inject({ method: "GET", url: `/admin/clients/${CONN}`, headers: viaCaddy })).statusCode).toBe(404);
     expect((await instance.inject({ method: "GET", url: "/admin/nothing", headers: viaCaddy })).statusCode).toBe(404);
+  });
+});
+
+describe("connection tabs", () => {
+  const get = async (instance: FastifyInstance, url: string) =>
+    instance.inject({ method: "GET", url, headers: viaCaddy });
+
+  it("opens on Conexão with actions, QR and the delete form", async () => {
+    const response = await get(await start(), `/admin/connections/${CONN}`);
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('aria-current="page">Conexão');
+    expect(response.body).toContain(`/admin/connections/${CONN}/delete`);
+    expect(response.body).toContain("data-qr-url");
+    expect(queries.connectionHistory).not.toHaveBeenCalled();
+  });
+
+  it("shows the status history and this session's deliveries", async () => {
+    const response = await get(await start(), `/admin/connections/${CONN}?tab=historico`);
+    expect(queries.connectionHistory).toHaveBeenCalledWith(CONN);
+    expect(response.body).toContain("Número desconectado no celular");
+    expect(response.body).toContain("message.received");
+  });
+
+  it("shows ids to copy, and never an API key", async () => {
+    const response = await get(await start(), `/admin/connections/${CONN}?tab=desenvolvedor`);
+    expect(response.body).toContain('id="dev-session"');
+    expect(response.body).toContain(CONN);
+    expect(response.body).toContain("API key não aparece aqui");
+    expect(response.body).not.toMatch(/onc_[A-Za-z0-9]{16}_/);
+  });
+
+  it("lists fixed behaviors and falls back to Conexão for an unknown tab", async () => {
+    const instance = await start();
+    expect((await get(instance, `/admin/connections/${CONN}?tab=configuracoes`)).body).toContain("Sempre ligado");
+    expect((await get(instance, `/admin/connections/${CONN}?tab=nada`)).body).toContain('aria-current="page">Conexão');
+  });
+
+  it("deletes only when EXCLUIR is typed, then logs the number out", async () => {
+    const instance = await start();
+    const missing = await post(instance, `/admin/connections/${CONN}/delete`, "confirm=excluir");
+    expect(missing.headers.location).toContain(`/admin/connections/${CONN}?ok=`);
+    expect(queries.deleteConnection).not.toHaveBeenCalled();
+    expect(sessions.logout).not.toHaveBeenCalled();
+
+    const done = await post(instance, `/admin/connections/${CONN}/delete`, "confirm=EXCLUIR");
+    expect(done.headers.location).toMatch(/^\/admin\/connections\?ok=/);
+    expect(queries.deleteConnection).toHaveBeenCalledWith({ name: "john" }, CONN);
+    expect(sessions.logout).toHaveBeenCalledWith(CONN);
+  });
+});
+
+describe("webhook endpoint page", () => {
+  it("shows a compatibility endpoint's events as fixed, without the secret path", async () => {
+    const response = await (await start()).inject({ method: "GET", url: `/admin/webhooks/endpoints/${KEY}`, headers: viaCaddy });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("Compatibilidade (D-API)");
+    expect(response.body).not.toContain("s3cr3t");
+    expect(response.body).not.toContain("Salvar eventos");
+    expect(response.body).toContain(`/admin/webhooks/endpoints/${KEY}/pause`);
+  });
+
+  it("lets a native endpoint choose events, refusing an empty choice", async () => {
+    const instance = await start();
+    const page = await instance.inject({ method: "GET", url: `/admin/webhooks/endpoints/${NATIVE}`, headers: viaCaddy });
+    expect(page.body).toContain("Salvar eventos");
+
+    const empty = await post(instance, `/admin/webhooks/endpoints/${NATIVE}/events`, "mode=some");
+    expect(empty.headers.location).toContain("Escolha");
+    expect(queries.setEndpointEvents).not.toHaveBeenCalled();
+
+    await post(instance, `/admin/webhooks/endpoints/${NATIVE}/events`,
+      "mode=some&event_message.status=on&event_connection.status=on&event_bogus=on");
+    expect(queries.setEndpointEvents).toHaveBeenLastCalledWith({ name: "john" }, NATIVE, ["message.status", "connection.status"]);
+    await post(instance, `/admin/webhooks/endpoints/${NATIVE}/events`, "mode=all");
+    expect(queries.setEndpointEvents).toHaveBeenLastCalledWith({ name: "john" }, NATIVE, []);
+  });
+
+  it("explains when a compatibility endpoint's events cannot change, and pauses", async () => {
+    const instance = await start();
+    const refused = await post(instance, `/admin/webhooks/endpoints/${KEY}/events`, "mode=all");
+    expect(decodeURIComponent(refused.headers.location as string)).toContain("compatibilidade");
+    const paused = await post(instance, `/admin/webhooks/endpoints/${KEY}/pause`);
+    expect(paused.headers.location).toContain(`/admin/webhooks/endpoints/${KEY}?ok=`);
+    expect(queries.pauseEndpoint).toHaveBeenCalledWith({ name: "john" }, KEY);
   });
 });
 

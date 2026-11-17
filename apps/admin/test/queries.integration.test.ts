@@ -211,6 +211,41 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
     expect(rows.every((r) => r.actor_id === "john")).toBe(true);
   });
 
+  it("reads a connection's status history and its session's deliveries", async () => {
+    // Each real status change emits connection.status (trigger); a no-op does not.
+    await sql("UPDATE onconnect.connections SET status = 'connecting', status_reason = 'reconnecting' WHERE id = $1", [CONN]);
+    await sql("UPDATE onconnect.connections SET status = 'connected', status_reason = NULL WHERE id = $1", [CONN]);
+    await sql("UPDATE onconnect.connections SET status = 'connected' WHERE id = $1", [CONN]);
+    const history = await queries.connectionHistory(CONN);
+    expect(history.slice(0, 2).map((h) => [h.previous_status, h.status])).toEqual([
+      ["connecting", "connected"], ["connected", "connecting"],
+    ]);
+    expect(history[1]?.reason).toBe("reconnecting");
+    const deliveries = await queries.connectionDeliveries(CONN);
+    expect(deliveries.map((d) => d.id)).toContain(DELIVERY);
+  });
+
+  it("pauses endpoints and changes events only on native ones", async () => {
+    const native = "aaaaaaaa-0000-4000-8000-0000000000a7";
+    await sql(
+      `INSERT INTO onconnect.webhook_endpoints
+         (id, client_id, url, status, payload_format, secret_ciphertext, secret_nonce, secret_auth_tag, secret_key_version)
+       VALUES ($1, $2, 'https://hooks.example.com/native', 'active', 'onconnect',
+               '\\x01', decode(repeat('00', 12), 'hex'), decode(repeat('00', 16), 'hex'), 1)`,
+      [native, CLIENT],
+    );
+    expect(await queries.setEndpointEvents(admin, native, ["message.status"])).toBe(true);
+    expect((await queries.webhookEndpoint(native))?.event_types).toEqual(["message.status"]);
+    // The D-API endpoint's events belong to the compatible session routes.
+    expect(await queries.setEndpointEvents(admin, ENDPOINT, [])).toBe(false);
+
+    expect(await queries.pauseEndpoint(admin, native)).toBe(true);
+    expect(await queries.pauseEndpoint(admin, native)).toBe(false);
+    expect((await queries.webhookEndpoint(native))?.status).toBe("paused");
+    expect(await queries.reactivateEndpoint(admin, native)).toBe(true);
+    expect((await queries.webhookEndpoint(native))?.status).toBe("active");
+  });
+
   it("measures health per window, in buckets sized to the window", async () => {
     // A drop and a failed send, recorded now, must show in totals and in the last bucket.
     await sql("UPDATE onconnect.connections SET status = 'disconnected', status_reason = 'logged_out' WHERE id = $1", [CONN]);
@@ -240,5 +275,17 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
     const hour = await queries.monitoring("1h");
     const sent = hour.buckets.reduce((sum, b) => sum + Number(b.sent), 0);
     expect(sent).toBe(Number(hour.totals?.sent));
+  });
+
+  it("deletes a connection as a soft delete, emitting the status event and the audit", async () => {
+    expect(await queries.deleteConnection(admin, CONN)).toBe(true);
+    expect(await queries.deleteConnection(admin, CONN)).toBe(false);
+    expect(await queries.connection(CONN)).toBeNull();
+    const [row] = await sql<{ deleted: boolean; status: string; status_reason: string }>(
+      "SELECT deleted_at IS NOT NULL AS deleted, status, status_reason FROM onconnect.connections WHERE id = $1", [CONN]);
+    expect(row).toEqual({ deleted: true, status: "disconnected", status_reason: "deleted_by_admin" });
+    const [audit] = await sql<{ actor_id: string }>(
+      "SELECT actor_id FROM onconnect.audit_log WHERE action = 'connection.deleted' AND target_id = $1", [CONN]);
+    expect(audit?.actor_id).toBe("john");
   });
 });

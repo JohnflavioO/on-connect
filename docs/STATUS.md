@@ -2,6 +2,20 @@
 
 Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
 
+## Conexão em abas e gestão de webhooks no painel (2026-11-17)
+
+- A partir das configurações de instância da D-API, decidido trazer: abas da conexão
+  (Conexão com Excluir, Histórico, Desenvolvedor, Configurações) e pausa/eventos do webhook.
+  Não trazer: exibir API key (só guardamos o resumo), eventos que o On Connect não gera,
+  RabbitMQ, chamadas/voz, DDI +55.
+- Branch `feat/admin-connection-tabs` (ver `docs/admin.md`). Sem migration e sem variável;
+  depois do merge, atualizar só o `admin`.
+- `pnpm check` passou; 12 testes PostgreSQL do painel passaram em banco descartável
+  (histórico via trigger, pausa/eventos só em endpoint nativo, exclusão lógica com auditoria);
+  visual conferido em Chromium (desktop e 375 px, sem overflow).
+- Próxima etapa: **Rejeitar chamadas** e **Marcar como lido ao responder** por conexão
+  (precisa de migration e de ajuste no `sessions`, testar com número real).
+
 ## Monitoramento no painel (2026-11-17)
 
 - Estado conferido: `main` em `b3cb9c3` (PRs #25 a #29 integrados); painel em produção e Tendi
