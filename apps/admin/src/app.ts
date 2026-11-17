@@ -3,7 +3,8 @@ import { QR_TTL_SECONDS, loggerOptions, type SessionGateway } from "@on-connect/
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import QRCode from "qrcode";
 import { CSS, JS } from "./assets.js";
-import { badge, formatDate, formatNumber, formatPhone, html, maskUrl, page, type Html } from "./html.js";
+import { connectionTable, dashboardView } from "./dashboard.js";
+import { badge, formatDate, formatNumber, formatPhone, html, icon, maskUrl, page } from "./html.js";
 import type { Admin, AdminQueries } from "./queries.js";
 
 export interface AdminAppOptions {
@@ -116,81 +117,41 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     reply.type("text/javascript; charset=utf-8").send(JS));
 
   // ---------------------------------------------------------------- Dashboard
-  app.get("/admin", async (request, reply) => {
-    const { totals, days } = await queries.dashboard();
-    const max = Math.max(1, ...days.flatMap((d) => [Number(d.sent), Number(d.received)]));
-    const weekday = new Intl.DateTimeFormat("pt-BR", { weekday: "short", timeZone: "UTC" });
-    const card = (label: string, value: string, sub: Html | string) =>
-      html`<div class="card"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
-
+  app.get<{ Querystring: { days?: string } }>("/admin", async (request, reply) => {
+    const period = request.query.days === "30" ? 30 : request.query.days === "14" ? 14 : 7;
+    const [data, rows] = await Promise.all([queries.dashboard(period), queries.connections({})]);
     return show(reply, request, {
-      title: "Dashboard",
-      active: "dashboard",
-      notice: noticeOf(request),
-      body: html`
-        <div class="cards">
-          ${card("Conexões ativas", formatNumber(totals?.connected ?? 0), `de ${formatNumber(totals?.live ?? 0)} no total`)}
-          ${card("Mensagens enviadas", formatNumber(totals?.sent7 ?? 0), "últimos 7 dias")}
-          ${card("Mensagens recebidas", formatNumber(totals?.received7 ?? 0), "últimos 7 dias")}
-          ${card("Clientes", formatNumber(totals?.clients ?? 0), `${formatNumber(totals?.tenants ?? 0)} tenants`)}
-          ${card("Webhooks", formatNumber(totals?.pending ?? 0),
-            html`aguardando entrega · <a href="/admin/webhooks">${formatNumber(totals?.dead24 ?? 0)} desistidas em 24 h</a>${
-              Number(totals?.disabled ?? 0) > 0 ? html` · ${formatNumber(totals?.disabled ?? 0)} endpoints desativados` : ""}`)}
-        </div>
-        <div class="panel">
-          <h2 style="margin-top:0">Volume de mensagens (7 dias)</h2>
-          <div class="chart">
-            ${days.map((d) => html`
-              <div class="day" title="${d.day}: ${d.sent} enviadas, ${d.received} recebidas">
-                <div class="bars">
-                  <div class="bar sent" style="height:${Math.round((Number(d.sent) / max) * 100)}%"></div>
-                  <div class="bar received" style="height:${Math.round((Number(d.received) / max) * 100)}%"></div>
-                </div>
-                <span>${weekday.format(new Date(`${d.day}T12:00:00Z`))}</span>
-              </div>`)}
-          </div>
-          <div class="legend"><span><i class="sent" style="background:var(--accent)"></i>Enviadas</span>
-            <span><i style="background:#2b5f66"></i>Recebidas</span></div>
-        </div>`,
+      title: "Dashboard", active: "dashboard", notice: noticeOf(request),
+      body: dashboardView(data, rows, period),
     });
   });
 
   // ---------------------------------------------------------------- Connections
-  app.get<{ Querystring: { status?: string; client?: string } }>("/admin/connections", async (request, reply) => {
+  app.get<{ Querystring: { status?: string; client?: string; q?: string } }>("/admin/connections", async (request, reply) => {
     const status = STATUS_FILTERS.some(([value]) => value && value === request.query.status)
       ? request.query.status : undefined;
     const client = request.query.client && SLUG.test(request.query.client) ? request.query.client : undefined;
-    const rows = await queries.connections({ status, client });
+    const search = typeof request.query.q === "string" ? request.query.q.trim().slice(0, 100) || undefined : undefined;
+    const rows = await queries.connections({ status, client, search });
+    const filterUrl = (value: string) => {
+      const params = new URLSearchParams();
+      if (value) params.set("status", value);
+      if (client) params.set("client", client);
+      if (search) params.set("q", search);
+      return `/admin/connections${params.size ? `?${params.toString()}` : ""}`;
+    };
     return show(reply, request, {
-      title: "Conexões",
-      active: "connections",
-      notice: noticeOf(request),
+      title: "Conexões", active: "connections", notice: noticeOf(request),
       body: html`
-        <form class="toolbar" method="get" action="/admin/connections">
-          <select name="status">
-            ${STATUS_FILTERS.map(([value, label]) =>
-              html`<option value="${value}" ${value === (status ?? "") ? html`selected` : ""}>${label}</option>`)}
-          </select>
-          <input name="client" placeholder="cliente (slug)" value="${client ?? ""}">
-          <button type="submit">Filtrar</button>
-          <span class="muted">${formatNumber(rows.length)} conexões</span>
-        </form>
-        <div class="panel">
-          <table>
-            <thead><tr><th>Sessão / tenant</th><th>Cliente</th><th>Número</th><th>Status</th><th>Desde</th></tr></thead>
-            <tbody>
-              ${rows.length === 0 ? html`<tr><td colspan="5" class="muted">Nenhuma conexão.</td></tr>` : ""}
-              ${rows.map((row) => html`<tr>
-                <td><a href="/admin/connections/${row.id}">${row.session_key ?? row.tenant}</a>
-                  ${row.session_key && row.session_key !== row.tenant ? html`<div class="muted">${row.tenant}</div>` : ""}</td>
-                <td><a href="/admin/clients/${row.client_id}">${row.client_slug}</a></td>
-                <td>${formatPhone(row.display_phone_number)}${row.verified_name ? html`<div class="muted">${row.verified_name}</div>` : ""}</td>
-                <td>${badge(row.status)}${row.status_reason ? html`<div class="muted mono">${row.status_reason}</div>` : ""}</td>
-                <td class="muted">${formatDate(row.status_changed_at)}</td>
-              </tr>`)}
-            </tbody>
-          </table>
-        </div>`,
+        <section class="overview-intro"><div><h2>Seus números, sob controle.</h2><p>Consulte o status de cada sessão e abra os detalhes para gerenciar o número ou o QR Code.</p></div><a class="button" href="${filterUrl(status ?? "")}">${icon("refresh")} Atualizar</a></section>
+        <div class="connection-tabs" role="navigation" aria-label="Filtrar por status">${STATUS_FILTERS.map(([value, label]) => html`<a class="${(status ?? "") === value ? "selected" : ""}" href="${filterUrl(value)}" ${(status ?? "") === value ? html`aria-current="page"` : ""}>${label}</a>`)}</div>
+        <section class="panel connections-panel"><form class="connection-search" method="get" action="/admin/connections">
+          ${status ? html`<input type="hidden" name="status" value="${status}">` : ""}
+          <label class="search-input">${icon("search")}<span class="sr-only">Buscar sessão, número ou nome</span><input name="q" placeholder="Buscar sessão, número ou nome…" value="${search ?? ""}" maxlength="100"></label>
+          <label class="client-filter"><span class="sr-only">Slug do cliente</span><input name="client" placeholder="Cliente (slug)" value="${client ?? ""}" maxlength="63"></label>
+          <button type="submit" class="button primary">Filtrar</button>${search || client || status ? html`<a class="button compact" href="/admin/connections">Limpar</a>` : ""}
+        </form><div class="list-summary"><span>${formatNumber(rows.length)} ${rows.length === 1 ? "conexão encontrada" : "conexões encontradas"}</span><span>Até 500 conexões por consulta</span></div>
+        ${connectionTable(rows)}</section>`,
     });
   });
 
@@ -213,7 +174,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
               <tr><th>Status</th><td>${badge(row.status)} <span class="muted mono">${row.status_reason ?? ""}</span></td></tr>
               <tr><th>Número</th><td>${formatPhone(row.display_phone_number)} <span class="muted">${row.verified_name ?? ""}</span></td></tr>
               <tr><th>Cliente</th><td><a href="/admin/clients/${row.client_id}">${row.client_slug}</a></td></tr>
-              <tr><th>Tenant</th><td class="mono">${row.tenant}</td></tr>
+              <tr><th>Organização</th><td class="mono">${row.tenant}</td></tr>
               <tr><th>Sessão</th><td class="mono">${row.session_key ?? "—"}</td></tr>
               <tr><th>Conexão</th><td class="mono">${row.id}</td></tr>
               <tr><th>Desde</th><td>${formatDate(row.status_changed_at)}</td></tr>
@@ -353,11 +314,11 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
           </form>
         </div>
         <div class="panel">
-          <h2 style="margin-top:0">Tenants (${formatNumber(tenants.length)})</h2>
+          <h2 style="margin-top:0">Organizações (${formatNumber(tenants.length)})</h2>
           <table>
             <thead><tr><th>External id</th><th>Nome</th><th>Plano</th><th>Conexões</th><th>Comercial</th><th>Operacional</th></tr></thead>
             <tbody>
-              ${tenants.length === 0 ? html`<tr><td colspan="6" class="muted">Nenhum tenant.</td></tr>` : ""}
+              ${tenants.length === 0 ? html`<tr><td colspan="6" class="muted">Nenhuma organização.</td></tr>` : ""}
               ${tenants.map((tenant) => html`<tr>
                 <td class="mono"><a href="/admin/connections?client=${client.slug}">${tenant.external_id}</a></td>
                 <td>${tenant.name}</td>
@@ -419,7 +380,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
               ${endpoints.map((endpoint) => html`<tr>
                 <td>${endpoint.client_slug}${endpoint.tenant ? html`<div class="muted mono">${endpoint.tenant}</div>` : ""}</td>
                 <td class="mono">${maskUrl(endpoint.url)}</td>
-                <td>${endpoint.payload_format === "dapi" ? "D-API" : "On Connect"}</td>
+                <td>${endpoint.payload_format === "dapi" ? "Compatibilidade" : "On Connect"}</td>
                 <td class="muted">${endpoint.event_types.length === 0 ? "todos" : endpoint.event_types.join(", ")}</td>
                 <td>${badge(endpoint.status)}</td>
                 <td>${formatNumber(endpoint.consecutive_failures)}${endpoint.failing_since

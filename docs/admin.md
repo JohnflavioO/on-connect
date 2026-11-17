@@ -4,6 +4,28 @@
 
 ## Telas
 
+O console tem navegação responsiva, atalhos para conexões, clientes e webhooks,
+e apresenta o instante em que a página foi consultada. Atualize a página ou use
+**Atualizar** para consultar os dados novamente.
+
+### Visão geral e conexões
+
+- **Dashboard:** mensagens em períodos de 7, 14 ou 30 dias, com calendário no
+  horário de São Paulo. Os cartões e o gráfico usam o mesmo intervalo.
+- **Gráfico:** clique nas legendas para mostrar/ocultar cada série; a tabela
+  em **Ver dados por dia** mantém os números disponíveis sem depender do gráfico.
+- **Conectividade:** mostra quantas conexões estão ativas no momento da consulta;
+  o percentual não é uma métrica histórica de disponibilidade.
+- **Webhooks:** fila aguardando entrega, desistidas nas últimas 24 horas e
+  endpoints desativados, com acesso à central de entregas.
+- **Conexões:** busca literal por sessão, número ou nome, combinada com filtros
+  de status e slug do cliente. A consulta mantém o limite de 500 registros.
+  Cada linha abre a página existente com QR, reinício e desconexão auditados.
+
+Os dados são consultados no banco; a página não exibe conteúdo de mensagens.
+O formato de payload `dapi` aparece como **Compatibilidade**, sem alterar o
+contrato enviado aos integradores.
+
 | Tela | O que tem |
 | --- | --- |
 | Dashboard | conexões ativas, mensagens enviadas e recebidas (7 dias, com gráfico), clientes e tenants, entregas de webhook aguardando e desistidas, endpoints desativados |

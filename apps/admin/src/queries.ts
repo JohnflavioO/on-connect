@@ -30,7 +30,7 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
     );
 
   return {
-    async dashboard() {
+    async dashboard(period: 7 | 14 | 30 = 7) {
       const [totals] = await run<{
         connected: string; live: string; clients: string; tenants: string;
         sent7: string; received7: string; pending: string; dead24: string; disabled: string;
@@ -41,29 +41,38 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
            (SELECT count(*) FROM onconnect.clients WHERE status = 'active') AS clients,
            (SELECT count(*) FROM onconnect.tenants) AS tenants,
            (SELECT count(*) FROM onconnect.messages
-             WHERE direction = 'outbound' AND created_at > now() - interval '7 days') AS sent7,
+             WHERE direction = 'outbound' AND created_at >=
+               ((date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') - make_interval(days => $1::integer - 1))
+                 AT TIME ZONE 'America/Sao_Paulo')
+               AND created_at <= now()) AS sent7,
            (SELECT count(*) FROM onconnect.messages
-             WHERE direction = 'inbound' AND created_at > now() - interval '7 days') AS received7,
+             WHERE direction = 'inbound' AND created_at >=
+               ((date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') - make_interval(days => $1::integer - 1))
+                 AT TIME ZONE 'America/Sao_Paulo')
+               AND created_at <= now()) AS received7,
            (SELECT count(*) FROM onconnect.webhook_deliveries WHERE status IN ('pending', 'failed')) AS pending,
            (SELECT count(*) FROM onconnect.webhook_deliveries
              WHERE status = 'dead' AND updated_at > now() - interval '24 hours') AS dead24,
            (SELECT count(*) FROM onconnect.webhook_endpoints WHERE status = 'disabled') AS disabled`,
+        [period],
       );
       const days = await run<{ day: string; sent: string; received: string }>(
         `SELECT to_char(d.day, 'YYYY-MM-DD') AS day,
                 count(m.id) FILTER (WHERE m.direction = 'outbound') AS sent,
                 count(m.id) FILTER (WHERE m.direction = 'inbound') AS received
-           FROM generate_series((now() AT TIME ZONE 'America/Sao_Paulo')::date - 6,
-                                (now() AT TIME ZONE 'America/Sao_Paulo')::date, interval '1 day') AS d(day)
+           FROM generate_series(date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') - make_interval(days => $1::integer - 1),
+                                date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo'), interval '1 day') AS d(day)
            LEFT JOIN onconnect.messages m
-             ON m.created_at > now() - interval '8 days'
-            AND (m.created_at AT TIME ZONE 'America/Sao_Paulo')::date = d.day::date
+             ON m.created_at >= (d.day AT TIME ZONE 'America/Sao_Paulo')
+            AND m.created_at < ((d.day + interval '1 day') AT TIME ZONE 'America/Sao_Paulo')
+            AND m.created_at <= now()
           GROUP BY d.day ORDER BY d.day`,
+        [period],
       );
       return { totals, days };
     },
 
-    connections(filter: { status?: string | undefined; client?: string | undefined }) {
+    connections(filter: { status?: string | undefined; client?: string | undefined; search?: string | undefined }) {
       return run<{
         id: string; session_key: string | null; label: string | null; status: string; status_reason: string | null;
         status_changed_at: Date; display_phone_number: string | null; verified_name: string | null;
@@ -78,9 +87,11 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
           WHERE c.deleted_at IS NULL
             AND ($1::text IS NULL OR c.status = $1)
             AND ($2::text IS NULL OR cl.slug = $2)
+            AND ($3::text IS NULL OR strpos(lower(concat_ws(' ', c.session_key, c.label, t.external_id,
+                 c.display_phone_number, c.verified_name)), lower($3::text)) > 0)
           ORDER BY c.status = 'connected', c.status_changed_at DESC
           LIMIT 500`,
-        [filter.status ?? null, filter.client ?? null],
+        [filter.status ?? null, filter.client ?? null, filter.search ?? null],
       );
     },
 

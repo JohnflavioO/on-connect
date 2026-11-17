@@ -2,6 +2,26 @@
 
 Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
 
+## Dashboard e identidade visual em revisão (2026-11-17)
+
+- O usuário confirmou que imagem e áudio passaram a abrir após o deploy do
+  PR #27 (`0c4e9af`) e que o envio de mídia pelo Inbox também funcionou. A sessão
+  antiga da D-API ainda deve ser preservada até decisão explícita do usuário.
+- Branch `feat/admin-operations-dashboard`: novo visual responsivo, gráfico
+  de 7/14/30 dias, visão das conexões, fila de webhooks, conexões recentes,
+  legendas interativas, dados diários acessíveis e busca literal de conexões.
+  Calendário e totais alinhados ao horário de São Paulo; sem migration.
+- Build, typecheck, lint e 252 testes padrão passaram. Os 7 testes PostgreSQL
+  do painel passaram em banco descartável, incluindo limites de dia e períodos;
+  as demais suítes PostgreSQL não foram executadas nesta etapa. Chromium
+  validou filtros/legendas e layout em 1440 px e 390 px sem overflow da página.
+- No repositório Tendi, branch `fix/whatsapp-provider-labels`: textos de cliente
+  neutros e console administrativo com nome do provedor e presença da chave
+  consultados no servidor, sem expor credenciais. Lint, tipos e 551 testes
+  passaram; build local permanece bloqueado pelo Google Fonts na rede do Codex.
+- Capturas locais usam dados demonstrativos. Commit/PR e deploy das duas
+  branches ainda pendentes; registros abaixo descrevem etapas anteriores.
+
 ## Integração Tendi e mídia no navegador (2026-11-17)
 
 - PR #26 (`d9ac857`) implantado em sessions; o usuário confirmou que o envio
