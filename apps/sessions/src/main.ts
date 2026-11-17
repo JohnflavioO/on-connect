@@ -14,6 +14,7 @@ import {
 } from "@on-connect/core";
 import { Worker } from "bullmq";
 import { createRedisAuthState } from "./auth-state.js";
+import { guardConsole } from "./console-guard.js";
 import { createBaileysSocketFactory, resolveWaVersion } from "./baileys-socket.js";
 import { SessionManager } from "./session-manager.js";
 import { createOutboundProcessor } from "./outbound.js";
@@ -28,6 +29,8 @@ const SHUTDOWN_TIMEOUT_MS = 20_000;
 async function main(): Promise<void> {
   const env = loadSessionsEnv();
   const logger = createLogger({ level: env.LOG_LEVEL, service: "sessions" });
+  // Before the library loads any socket: it prints session keys to the console.
+  guardConsole(logger);
 
   const redis = createRedis({ url: env.REDIS_URL, connectionName: "sessions:state", logger });
   const commandConnection = createRedis({
