@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { ClientTransaction } from "./db-transaction.js";
 
 /**
@@ -104,9 +105,24 @@ export class MessageRejectedError extends Error {
  * The caller dispatches it to the sessions process after commit; if that
  * dispatch is lost, the sessions process replays pending jobs.
  */
+/**
+ * A WhatsApp message id in the format WhatsApp Web uses. Set at creation when
+ * the caller needs the id at once (the D-API layer answers with it); the
+ * sessions process sends with a stored id instead of making a new one.
+ */
+export function generateWhatsappMessageId(): string {
+  return `3EB0${randomBytes(10).toString("hex").toUpperCase()}`;
+}
+
 export async function createOutboundText(
   tx: ClientTransaction,
-  input: { connectionId: string; to: string; text: string; clientReference?: string | null },
+  input: {
+    connectionId: string;
+    to: string;
+    text: string;
+    clientReference?: string | null;
+    providerMessageId?: string | null;
+  },
 ): Promise<Message> {
   const connection = await tx.query<{
     id: string;
@@ -137,8 +153,8 @@ export async function createOutboundText(
   const inserted = await tx.query<{ id: string }>(
     `INSERT INTO onconnect.messages
        (client_id, tenant_id, connection_id, direction, status, message_type, counterpart,
-        client_reference, payload)
-     VALUES (onconnect.current_client_id(), $1, $2, 'outbound', 'queued', 'text', $3, $4, $5)
+        client_reference, payload, provider_message_id)
+     VALUES (onconnect.current_client_id(), $1, $2, 'outbound', 'queued', 'text', $3, $4, $5, $6)
      RETURNING id`,
     [
       row.tenant_id,
@@ -146,6 +162,7 @@ export async function createOutboundText(
       input.to,
       input.clientReference ?? null,
       JSON.stringify({ content: { type: "text", text: input.text } }),
+      input.providerMessageId ?? null,
     ],
   );
   const id = inserted.rows[0]?.id;

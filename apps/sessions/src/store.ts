@@ -126,9 +126,12 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore {
         jid: message.jid,
         pushName: message.pushName,
         counterpartIsPhone: message.counterpartIsPhone,
+        fromMe: message.fromMe,
       };
       // Message and event in one statement: an event is never produced for a
       // duplicate (same connection + WhatsApp id), and never lost for a new one.
+      // A message this process sent through the API already has its WhatsApp
+      // id stored, so its own echo is a duplicate here.
       const result = await run<{ id: string }>(
         `WITH c AS (
            SELECT c.id, c.client_id, c.tenant_id, t.external_id
@@ -138,8 +141,13 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore {
          ), m AS (
            INSERT INTO onconnect.messages
              (client_id, tenant_id, connection_id, direction, status, message_type,
-              counterpart, provider_message_id, payload)
-           SELECT client_id, tenant_id, id, 'inbound', 'received', $2, $3, $4, $5::jsonb FROM c
+              counterpart, provider_message_id, payload, sent_at)
+           SELECT client_id, tenant_id, id,
+                  CASE WHEN $8 THEN 'outbound' ELSE 'inbound' END,
+                  CASE WHEN $8 THEN 'sent' ELSE 'received' END,
+                  $2, $3, $4, $5::jsonb,
+                  CASE WHEN $8 THEN $6::timestamptz END
+             FROM c
            ON CONFLICT (connection_id, provider_message_id) WHERE provider_message_id IS NOT NULL
              DO NOTHING
            RETURNING id, client_id, tenant_id, connection_id
@@ -150,7 +158,11 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore {
                 'message.received:' || m.id,
                 jsonb_build_object('messageId', m.id, 'connectionId', m.connection_id,
                                    'tenantExternalId', c.external_id, 'from', $3::text,
-                                   'contactName', $7::text, 'content', $5::jsonb -> 'content'),
+                                   'contactName', $7::text, 'content', $5::jsonb -> 'content',
+                                   'providerMessageId', $4::text, 'fromMe', $8::boolean,
+                                   'jid', $5::jsonb ->> 'jid',
+                                   'counterpartIsPhone', ($5::jsonb ->> 'counterpartIsPhone')::boolean,
+                                   'timestamp', $6::timestamptz),
                 $6
            FROM m CROSS JOIN c
          RETURNING id`,
@@ -162,6 +174,7 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore {
           JSON.stringify(payload),
           message.timestamp,
           message.pushName,
+          message.fromMe,
         ],
       );
       return result.rows.length > 0;
@@ -181,14 +194,16 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore {
               AND (CASE m.status WHEN 'queued' THEN 0 WHEN 'sending' THEN 1 WHEN 'sent' THEN 2
                                  WHEN 'delivered' THEN 3 WHEN 'read' THEN 4 ELSE 5 END)
                 < (CASE $3 WHEN 'sent' THEN 2 WHEN 'delivered' THEN 3 WHEN 'read' THEN 4 ELSE 5 END)
-           RETURNING m.id, m.client_id, m.tenant_id, m.connection_id, m.client_reference
+           RETURNING m.id, m.client_id, m.tenant_id, m.connection_id, m.client_reference,
+                     m.provider_message_id
          )
          INSERT INTO onconnect.webhook_events
            (client_id, tenant_id, connection_id, event_type, dedupe_key, payload, occurred_at)
          SELECT client_id, tenant_id, connection_id, 'message.status',
                 'message.status:' || id || ':' || $3,
                 jsonb_build_object('messageId', id, 'connectionId', connection_id,
-                                   'clientReference', client_reference, 'status', $3::text),
+                                   'clientReference', client_reference, 'status', $3::text,
+                                   'providerMessageId', provider_message_id),
                 now()
            FROM m
          ON CONFLICT (client_id, dedupe_key) DO NOTHING
@@ -255,7 +270,7 @@ export function createPostgresOutboundStore(pool: DatabasePool): OutboundStore {
               SET status = CASE WHEN status IN ('queued', 'sending') THEN 'sent' ELSE status END,
                   sent_at = coalesce(sent_at, now())
             WHERE id = $1
-           RETURNING id, client_id, tenant_id, connection_id, client_reference
+           RETURNING id, client_id, tenant_id, connection_id, client_reference, provider_message_id
          ), j AS (
            UPDATE onconnect.message_jobs SET status = 'done', last_error = NULL WHERE message_id = $1
          )
@@ -264,7 +279,8 @@ export function createPostgresOutboundStore(pool: DatabasePool): OutboundStore {
          SELECT client_id, tenant_id, connection_id, 'message.status',
                 'message.status:' || id || ':sent',
                 jsonb_build_object('messageId', id, 'connectionId', connection_id,
-                                   'clientReference', client_reference, 'status', 'sent'),
+                                   'clientReference', client_reference, 'status', 'sent',
+                                   'providerMessageId', provider_message_id),
                 now()
            FROM m
          ON CONFLICT (client_id, dedupe_key) DO NOTHING`,
@@ -278,7 +294,7 @@ export function createPostgresOutboundStore(pool: DatabasePool): OutboundStore {
            UPDATE onconnect.messages
               SET status = 'failed', failed_at = now(), error_code = $2, error_detail = $3
             WHERE id = $1 AND status IN ('queued', 'sending')
-           RETURNING id, client_id, tenant_id, connection_id, client_reference
+           RETURNING id, client_id, tenant_id, connection_id, client_reference, provider_message_id
          ), j AS (
            UPDATE onconnect.message_jobs SET status = 'dead', last_error = $2 WHERE message_id = $1
          )
@@ -288,7 +304,7 @@ export function createPostgresOutboundStore(pool: DatabasePool): OutboundStore {
                 'message.status:' || id || ':failed',
                 jsonb_build_object('messageId', id, 'connectionId', connection_id,
                                    'clientReference', client_reference, 'status', 'failed',
-                                   'error', $2::text),
+                                   'error', $2::text, 'providerMessageId', provider_message_id),
                 now()
            FROM m
          ON CONFLICT (client_id, dedupe_key) DO NOTHING`,

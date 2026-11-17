@@ -36,7 +36,7 @@ describe.skipIf(!enabled)("sessions store as onconnect_system (PostgreSQL 17)", 
   const inbound = (providerId: string): InboundMessage => ({
     providerId, jid: "5511999999999@s.whatsapp.net", counterpart: "5511999999999",
     counterpartIsPhone: true, pushName: "Ana", timestamp: new Date("2026-11-17T10:00:00Z"),
-    content: { type: "text", text: "olá" },
+    content: { type: "text", text: "olá" }, fromMe: false,
   });
 
   beforeAll(async () => {
@@ -117,6 +117,36 @@ describe.skipIf(!enabled)("sessions store as onconnect_system (PostgreSQL 17)", 
 
     await outbound.markFailed(OUT, "send_failed", "late failure");
     expect((await outbound.load(OUT))?.status).toBe("read");
+  });
+
+  it("records a message sent from the phone as outbound, with what the D-API layer needs", async () => {
+    expect(await sessions.recordInbound(CONN, { ...inbound("FROM-PHONE-1"), fromMe: true, pushName: null }))
+      .toBe(true);
+    const [row] = await sql<{ direction: string; status: string; sent: boolean }>(
+      `SELECT direction, status, sent_at IS NOT NULL AS sent FROM onconnect.messages
+        WHERE provider_message_id = 'FROM-PHONE-1'`);
+    expect(row).toEqual({ direction: "outbound", status: "sent", sent: true });
+    const [event] = await sql<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM onconnect.webhook_events
+        WHERE event_type = 'message.received' AND payload ->> 'providerMessageId' = 'FROM-PHONE-1'`);
+    expect(event?.payload).toMatchObject({
+      fromMe: true, from: "5511999999999", providerMessageId: "FROM-PHONE-1",
+      jid: "5511999999999@s.whatsapp.net", counterpartIsPhone: true,
+      timestamp: "2026-11-17T10:00:00+00:00",
+    });
+  });
+
+  it("drops the echo of a message sent through the API (same WhatsApp id)", async () => {
+    // markSending stored 3EB0OUT before the send; the socket then echoes it.
+    expect(await sessions.recordInbound(CONN, { ...inbound("3EB0OUT"), fromMe: true })).toBe(false);
+    const events = await sql(
+      "SELECT 1 FROM onconnect.webhook_events WHERE payload ->> 'providerMessageId' = '3EB0OUT' AND event_type = 'message.received'");
+    expect(events).toEqual([]);
+    // Status events carry the WhatsApp id the D-API layer reports by.
+    const ids = await sql<{ id: string }>(
+      `SELECT DISTINCT payload ->> 'providerMessageId' AS id FROM onconnect.webhook_events
+        WHERE event_type = 'message.status' AND payload ->> 'messageId' = $1`, [OUT]);
+    expect(ids).toEqual([{ id: "3EB0OUT" }]);
   });
 
   it("lists stale outbox jobs for replay", async () => {

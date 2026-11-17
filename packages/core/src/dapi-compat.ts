@@ -21,7 +21,11 @@ import {
 export const DAPI_SESSION_ID = /^[A-Za-z0-9._-]{1,100}$/;
 
 /** Events the D-API envelope can carry today. Grows with each phase. */
-export const DAPI_COMPAT_EVENTS: WebhookEventType[] = ["connection.status"];
+export const DAPI_COMPAT_EVENTS: WebhookEventType[] = [
+  "connection.status",
+  "message.received",
+  "message.status",
+];
 
 export interface CompatSession {
   connectionId: string;

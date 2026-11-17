@@ -67,9 +67,18 @@ OnConnect-Signature: t=1795430400,v1=5d2c...
   "tenantExternalId": "loja-1",
   "from": "5511999999999",
   "contactName": "Ana",
-  "content": { "type": "text", "text": "olá" }
+  "content": { "type": "text", "text": "olá" },
+  "providerMessageId": "id da mensagem no WhatsApp",
+  "fromMe": false,
+  "jid": "5511999999999@s.whatsapp.net",
+  "counterpartIsPhone": true,
+  "timestamp": "2026-11-17T12:00:00+00:00"
 }
 ```
+
+Com `fromMe: true` a mensagem foi enviada pelo próprio número no celular, e
+`from` é o destinatário. O que foi enviado pela API não volta como
+`message.received`.
 
 `data` de `connection.status` (toda mudança de status de uma conexão):
 

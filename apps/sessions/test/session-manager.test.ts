@@ -264,7 +264,7 @@ describe("SessionManager messages", () => {
   const inbound: InboundMessage = {
     providerId: "MSG1", jid: "5511999999999@s.whatsapp.net", counterpart: "5511999999999",
     counterpartIsPhone: true, pushName: "Ana", timestamp: new Date(0),
-    content: { type: "text", text: "oi" },
+    content: { type: "text", text: "oi" }, fromMe: false,
   };
 
   it("records inbound messages and status updates for the right connection", async () => {

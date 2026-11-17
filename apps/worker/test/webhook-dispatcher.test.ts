@@ -191,8 +191,83 @@ describe("webhook dispatcher", () => {
     expect(body.sessionId).toBe("conn-1");
   });
 
+  const received = (overrides: Record<string, unknown> = {}) => delivery({
+    payloadFormat: "dapi",
+    sessionId: "tendi-org-1",
+    eventType: "message.received",
+    payload: {
+      messageId: "uuid-1", providerMessageId: "WAMSG1", from: "5585999990000", contactName: "Ana",
+      jid: "123@lid", counterpartIsPhone: true, fromMe: false, timestamp: "2026-11-17T12:00:00+00:00",
+      content: { type: "text", text: "olá" }, ...overrides,
+    },
+  });
+
+  const sentBody = async (item: ClaimedDelivery) => {
+    const store = new FakeStore([item]);
+    const { instance, sent } = dispatcher(store, () => ({ statusCode: 200 }));
+    await instance.runOnce();
+    return { body: sent[0] ? JSON.parse(sent[0].body) as { event: string; data: Record<string, unknown> } : null, store };
+  };
+
+  it("sends a received text as D-API messages.received, with the phone JID", async () => {
+    const { body } = await sentBody(received());
+    expect(body).toEqual({
+      event: "messages.received",
+      sessionId: "tendi-org-1",
+      traceId: "del-1",
+      data: {
+        id: "WAMSG1", type: "text", message: "olá", fromMe: false,
+        from: { jid: "5585999990000@s.whatsapp.net", name: "Ana" }, to: {},
+        from_name: "Ana", timestamp: 1_794_916_800, is_group: false,
+      },
+    });
+  });
+
+  it("puts the other party in `to` for a message sent from the phone", async () => {
+    const { body } = await sentBody(received({ fromMe: true, contactName: null }));
+    expect(body?.data).toMatchObject({
+      fromMe: true, from: {}, to: { jid: "5585999990000@s.whatsapp.net" }, from_name: null,
+    });
+  });
+
+  it("keeps the opaque id when WhatsApp shared no phone", async () => {
+    const { body } = await sentBody(received({ counterpartIsPhone: false, from: "123" }));
+    expect(body?.data.from).toEqual({ jid: "123@lid", name: "Ana" });
+  });
+
+  it("describes media with its caption, voice notes as ptt", async () => {
+    const image = await sentBody(received({ content: { type: "image", caption: "foto", mimetype: "image/jpeg" } }));
+    expect(image.body?.data).toMatchObject({
+      type: "image", message: "foto",
+      media_data: { mimetype: "image/jpeg", filename: null, caption: "foto" }, media_url: null,
+    });
+    const voice = await sentBody(received({ content: { type: "audio", mimetype: "audio/ogg", voice: true } }));
+    expect(voice.body?.data).toMatchObject({ type: "ptt", message: null });
+  });
+
+  it.each([["delivered", "message.delivered"], ["read", "message.read"]])(
+    "sends status %s as %s keyed by the WhatsApp id",
+    async (status, event) => {
+      const { body } = await sentBody(delivery({
+        payloadFormat: "dapi", sessionId: "s", eventType: "message.status",
+        payload: { messageId: "uuid", status, providerMessageId: "3EB0ABC" },
+      }));
+      expect(body).toMatchObject({ event, data: { message_id: "3EB0ABC", status } });
+    },
+  );
+
+  it.each([
+    ["status sent", { eventType: "message.status", payload: { status: "sent", providerMessageId: "X" } }],
+    ["status failed", { eventType: "message.status", payload: { status: "failed", providerMessageId: "X" } }],
+    ["a message stored before the layer", { eventType: "message.received", payload: { content: { type: "text" } } }],
+  ])("skips %s for a D-API endpoint", async (_label, overrides) => {
+    const { body, store } = await sentBody(delivery({ payloadFormat: "dapi", ...overrides }));
+    expect(body).toBeNull();
+    expect(store.skipped).toHaveLength(1);
+  });
+
   it("skips, without blaming the endpoint, an event the D-API format cannot carry yet", async () => {
-    const store = new FakeStore([delivery({ payloadFormat: "dapi", eventType: "message.received" })]);
+    const store = new FakeStore([delivery({ payloadFormat: "dapi", eventType: "message.unknown" })]);
     const { instance, sent } = dispatcher(store, () => ({ statusCode: 200 }));
     await instance.runOnce();
     expect(sent).toEqual([]);
