@@ -34,6 +34,9 @@ export const mediaRoutes: FastifyPluginAsync<MediaRouteOptions> = async (app, { 
         return reply.code(404).send({ error: "not_found", message: "Media not found", requestId: request.id });
       }
       return reply
+        // Integrators embed these files from another origin. The signed
+        // token authorizes access; keep Helmet's default on JSON/error routes.
+        .header("cross-origin-resource-policy", "cross-origin")
         .header("content-type", media.mimetype)
         .header("content-disposition", INLINE.test(media.mimetype) ? "inline" : "attachment")
         .header("cache-control", "private, max-age=86400")
