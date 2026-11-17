@@ -12,17 +12,18 @@ const principal = (id: string): AuthenticatedPrincipal =>
   ({ clientId: id }) as AuthenticatedPrincipal;
 
 function fixture() {
-  const calls: Array<{ sql: string; params?: readonly unknown[] }> = [];
+  const calls: Array<{ sql: string; params?: readonly unknown[] | undefined }> = [];
   const release = vi.fn();
   const connection: DatabaseConnection = {
-    query: vi.fn(async (sql, params) => {
+    query: vi.fn(async (sql: string, params?: readonly unknown[]) => {
       calls.push({ sql, params });
       return { rows: [], rowCount: 0 };
     }),
     release,
   };
-  const pool: DatabasePool = { connect: vi.fn(async () => connection) };
-  return { calls, release, pool };
+  const connect = vi.fn(async () => connection);
+  const pool: DatabasePool = { connect };
+  return { calls, release, pool, connect };
 }
 
 describe("withClientTransaction", () => {
@@ -54,7 +55,7 @@ describe("withClientTransaction", () => {
     const f = fixture();
     await expect(withClientTransaction(f.pool, principal("not-a-uuid"), async () => 1))
       .rejects.toThrow("Authenticated client identity required");
-    expect(f.pool.connect).not.toHaveBeenCalled();
+    expect(f.connect).not.toHaveBeenCalled();
   });
 
   it("resets context per transaction even when the pool reuses one connection", async () => {
