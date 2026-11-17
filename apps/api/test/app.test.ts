@@ -323,3 +323,34 @@ describe("connection routes: rejected before the database", () => {
     expect(dbConnects).toBe(before);
   });
 });
+
+describe("message routes: rejected before the database", () => {
+  const auth = { authorization: `Bearer ${keyA.key}` };
+  const id = "aaaaaaaa-0000-4000-8000-0000000000c1";
+
+  it.each([
+    ["missing text", { to: "5511999999999" }],
+    ["empty text", { to: "5511999999999", text: "" }],
+    ["text over 4096 characters", { to: "5511999999999", text: "x".repeat(4097) }],
+    ["number with plus sign", { to: "+5511999999999", text: "oi" }],
+    ["number with spaces", { to: "55 11 99999 9999", text: "oi" }],
+    ["group id as recipient", { to: "120363000000000000@g.us", text: "oi" }],
+    ["unknown field", { to: "5511999999999", text: "oi", connectionId: id }],
+  ] as const)("rejects %s with 400", async (_label, payload) => {
+    const instance = await start();
+    const before = dbConnects;
+    const response = await instance.inject({
+      method: "POST", url: `/v1/connections/${id}/messages`, headers: auth, payload,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(dbConnects).toBe(before);
+  });
+
+  it("rejects malformed ids and cursors", async () => {
+    const instance = await start();
+    for (const url of ["/v1/messages/123", `/v1/connections/${id}/messages?before=abc`,
+      `/v1/connections/${id}/messages?limit=500`]) {
+      expect((await instance.inject({ method: "GET", url, headers: auth })).statusCode).toBe(400);
+    }
+  });
+});

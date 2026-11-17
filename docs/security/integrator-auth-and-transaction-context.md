@@ -124,3 +124,22 @@ Do not apply migrations to Supabase, merge, or deploy as part of this plan.
   unique index); a second link is logged out with `number_already_connected`.
 - Risk accepted by the product owner: the provider is unofficial and violates
   WhatsApp's terms; numbers can be banned. No ban-evasion features are built.
+
+## Messages (WhatsApp Web)
+
+- `POST /v1/connections/:id/messages` (`to` digits with country code, `text` ≤ 4096,
+  optional `clientReference`) stores the message and its `message_jobs` row in one
+  client-scoped transaction and returns 202. The sessions process sends it.
+- Sends are idempotent: the WhatsApp message id is stored before the send and
+  reused on retry; messages past `sending` are never sent again. Outbound jobs
+  retry for about 10 minutes, then the message is marked `failed`.
+- Outbox replay: every minute the sessions process re-enqueues jobs stuck in
+  `pending`/`enqueued` for over 2 minutes; the queue job id (= message id) dedupes.
+- Inbound text/media descriptions from 1:1 chats are stored once per WhatsApp id
+  (groups, broadcasts and own-device echoes are ignored). Media is described,
+  not downloaded. With LID addressing the phone comes from `remoteJidAlt`; when
+  WhatsApp withholds it, the opaque id is stored and flagged.
+- Status only moves forward (sent → delivered → read). Every inbound message and
+  status change writes a `webhook_events` row in the same statement; delivery of
+  those events to integrators is the next step.
+- Message content is never written to logs.

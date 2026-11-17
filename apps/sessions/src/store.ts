@@ -1,4 +1,5 @@
 import type { ConnectionStatus, DatabasePool } from "@on-connect/core";
+import type { InboundMessage, StatusUpdate } from "./message-mapping.js";
 
 export interface ConnectedAccount {
   /** e.g. 5511999999999:12@s.whatsapp.net */
@@ -21,6 +22,30 @@ export interface SessionStore {
   /** Ignored for retired (soft-deleted) connections. */
   setStatus(connectionId: string, status: ConnectionStatus, reason: string | null): Promise<void>;
   markConnected(connectionId: string, account: ConnectedAccount): Promise<"ok" | "number_in_use">;
+  /** Stores an inbound message and its event once; duplicates are ignored. */
+  recordInbound(connectionId: string, message: InboundMessage): Promise<boolean>;
+  /** Moves an outbound message forward (sent → delivered → read), never back. */
+  recordStatus(connectionId: string, update: StatusUpdate): Promise<boolean>;
+}
+
+export interface OutboundMessage {
+  id: string;
+  connectionId: string;
+  status: string;
+  to: string;
+  text: string;
+  providerMessageId: string | null;
+}
+
+/** Outbox side of outbound sends, also written as onconnect_system. */
+export interface OutboundStore {
+  load(messageId: string): Promise<OutboundMessage | null>;
+  /** Records the WhatsApp id before the send, so a retry reuses it. */
+  markSending(messageId: string, providerMessageId: string): Promise<void>;
+  markSent(messageId: string): Promise<void>;
+  markFailed(messageId: string, code: string, detail: string): Promise<void>;
+  /** Jobs still pending after `olderThanSeconds`: their queue entry may be lost. */
+  stalePending(olderThanSeconds: number): Promise<string[]>;
 }
 
 /**
@@ -93,6 +118,195 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore {
         if ((error as { code?: string }).code === "23505") return "number_in_use";
         throw error;
       }
+    },
+
+    async recordInbound(connectionId, message) {
+      const payload = {
+        content: message.content,
+        jid: message.jid,
+        pushName: message.pushName,
+        counterpartIsPhone: message.counterpartIsPhone,
+      };
+      // Message and event in one statement: an event is never produced for a
+      // duplicate (same connection + WhatsApp id), and never lost for a new one.
+      const result = await run<{ id: string }>(
+        `WITH c AS (
+           SELECT c.id, c.client_id, c.tenant_id, t.external_id
+             FROM onconnect.connections c
+             JOIN onconnect.tenants t ON t.id = c.tenant_id AND t.client_id = c.client_id
+            WHERE c.id = $1 AND c.deleted_at IS NULL
+         ), m AS (
+           INSERT INTO onconnect.messages
+             (client_id, tenant_id, connection_id, direction, status, message_type,
+              counterpart, provider_message_id, payload)
+           SELECT client_id, tenant_id, id, 'inbound', 'received', $2, $3, $4, $5::jsonb FROM c
+           ON CONFLICT (connection_id, provider_message_id) WHERE provider_message_id IS NOT NULL
+             DO NOTHING
+           RETURNING id, client_id, tenant_id, connection_id
+         )
+         INSERT INTO onconnect.webhook_events
+           (client_id, tenant_id, connection_id, event_type, dedupe_key, payload, occurred_at)
+         SELECT m.client_id, m.tenant_id, m.connection_id, 'message.received',
+                'message.received:' || m.id,
+                jsonb_build_object('messageId', m.id, 'connectionId', m.connection_id,
+                                   'tenantExternalId', c.external_id, 'from', $3::text,
+                                   'contactName', $7::text, 'content', $5::jsonb -> 'content'),
+                $6
+           FROM m CROSS JOIN c
+         RETURNING id`,
+        [
+          connectionId,
+          message.content.type,
+          message.counterpart,
+          message.providerId,
+          JSON.stringify(payload),
+          message.timestamp,
+          message.pushName,
+        ],
+      );
+      return result.rows.length > 0;
+    },
+
+    async recordStatus(connectionId, update) {
+      const result = await run<{ id: string }>(
+        `WITH m AS (
+           UPDATE onconnect.messages m
+              SET status = $3,
+                  sent_at = CASE WHEN $3 = 'sent' THEN coalesce(m.sent_at, now()) ELSE m.sent_at END,
+                  delivered_at = CASE WHEN $3 IN ('delivered', 'read')
+                                      THEN coalesce(m.delivered_at, now()) ELSE m.delivered_at END,
+                  read_at = CASE WHEN $3 = 'read' THEN coalesce(m.read_at, now()) ELSE m.read_at END,
+                  failed_at = CASE WHEN $3 = 'failed' THEN now() ELSE m.failed_at END
+            WHERE m.connection_id = $1 AND m.provider_message_id = $2 AND m.direction = 'outbound'
+              AND (CASE m.status WHEN 'queued' THEN 0 WHEN 'sending' THEN 1 WHEN 'sent' THEN 2
+                                 WHEN 'delivered' THEN 3 WHEN 'read' THEN 4 ELSE 5 END)
+                < (CASE $3 WHEN 'sent' THEN 2 WHEN 'delivered' THEN 3 WHEN 'read' THEN 4 ELSE 5 END)
+           RETURNING m.id, m.client_id, m.tenant_id, m.connection_id, m.client_reference
+         )
+         INSERT INTO onconnect.webhook_events
+           (client_id, tenant_id, connection_id, event_type, dedupe_key, payload, occurred_at)
+         SELECT client_id, tenant_id, connection_id, 'message.status',
+                'message.status:' || id || ':' || $3,
+                jsonb_build_object('messageId', id, 'connectionId', connection_id,
+                                   'clientReference', client_reference, 'status', $3::text),
+                now()
+           FROM m
+         ON CONFLICT (client_id, dedupe_key) DO NOTHING
+         RETURNING id`,
+        [connectionId, update.providerId, update.status],
+      );
+      return result.rows.length > 0;
+    },
+  };
+}
+
+export function createPostgresOutboundStore(pool: DatabasePool): OutboundStore {
+  const run = async <Row>(sql: string, params: readonly unknown[]) => {
+    const connection = await pool.connect();
+    try {
+      return await connection.query<Row>(sql, params);
+    } finally {
+      connection.release();
+    }
+  };
+
+  return {
+    async load(messageId) {
+      const result = await run<{
+        id: string; connection_id: string; status: string; counterpart: string;
+        text: string | null; provider_message_id: string | null;
+      }>(
+        `SELECT id, connection_id, status, counterpart, payload -> 'content' ->> 'text' AS text,
+                provider_message_id
+           FROM onconnect.messages WHERE id = $1 AND direction = 'outbound'`,
+        [messageId],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      return {
+        id: row.id,
+        connectionId: row.connection_id,
+        status: row.status,
+        to: row.counterpart,
+        text: row.text ?? "",
+        providerMessageId: row.provider_message_id,
+      };
+    },
+
+    async markSending(messageId, providerMessageId) {
+      await run(
+        `UPDATE onconnect.messages
+            SET status = 'sending', provider_message_id = coalesce(provider_message_id, $2)
+          WHERE id = $1 AND status IN ('queued', 'sending')`,
+        [messageId, providerMessageId],
+      );
+      await run(
+        `UPDATE onconnect.message_jobs SET status = 'enqueued', attempts = attempts + 1
+          WHERE message_id = $1`,
+        [messageId],
+      );
+    },
+
+    async markSent(messageId) {
+      // An event may already have moved it past "sent"; never move it back.
+      await run(
+        `WITH m AS (
+           UPDATE onconnect.messages
+              SET status = CASE WHEN status IN ('queued', 'sending') THEN 'sent' ELSE status END,
+                  sent_at = coalesce(sent_at, now())
+            WHERE id = $1
+           RETURNING id, client_id, tenant_id, connection_id, client_reference
+         ), j AS (
+           UPDATE onconnect.message_jobs SET status = 'done', last_error = NULL WHERE message_id = $1
+         )
+         INSERT INTO onconnect.webhook_events
+           (client_id, tenant_id, connection_id, event_type, dedupe_key, payload, occurred_at)
+         SELECT client_id, tenant_id, connection_id, 'message.status',
+                'message.status:' || id || ':sent',
+                jsonb_build_object('messageId', id, 'connectionId', connection_id,
+                                   'clientReference', client_reference, 'status', 'sent'),
+                now()
+           FROM m
+         ON CONFLICT (client_id, dedupe_key) DO NOTHING`,
+        [messageId],
+      );
+    },
+
+    async markFailed(messageId, code, detail) {
+      await run(
+        `WITH m AS (
+           UPDATE onconnect.messages
+              SET status = 'failed', failed_at = now(), error_code = $2, error_detail = $3
+            WHERE id = $1 AND status IN ('queued', 'sending')
+           RETURNING id, client_id, tenant_id, connection_id, client_reference
+         ), j AS (
+           UPDATE onconnect.message_jobs SET status = 'dead', last_error = $2 WHERE message_id = $1
+         )
+         INSERT INTO onconnect.webhook_events
+           (client_id, tenant_id, connection_id, event_type, dedupe_key, payload, occurred_at)
+         SELECT client_id, tenant_id, connection_id, 'message.status',
+                'message.status:' || id || ':failed',
+                jsonb_build_object('messageId', id, 'connectionId', connection_id,
+                                   'clientReference', client_reference, 'status', 'failed',
+                                   'error', $2::text),
+                now()
+           FROM m
+         ON CONFLICT (client_id, dedupe_key) DO NOTHING`,
+        [messageId, code, detail.slice(0, 500)],
+      );
+    },
+
+    async stalePending(olderThanSeconds) {
+      const result = await run<{ message_id: string }>(
+        // "enqueued" too: if Redis lost a job mid-retry it would otherwise
+        // stay there forever. The queue's job id dedupes a job still alive.
+        `SELECT j.message_id FROM onconnect.message_jobs j
+          WHERE j.status IN ('pending', 'enqueued')
+            AND j.updated_at < now() - make_interval(secs => $1)
+          ORDER BY j.created_at LIMIT 500`,
+        [olderThanSeconds],
+      );
+      return result.rows.map((row) => row.message_id);
     },
   };
 }

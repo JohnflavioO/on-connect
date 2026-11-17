@@ -7,8 +7,10 @@ API oficial entra depois, atrás da mesma API.
 
 > **Estado atual:** autenticação por API key (`GET /v1/me`), tenants
 > (`/v1/tenants`) e conexões WhatsApp Web (`/v1/tenants/:id/connections`,
-> `/v1/connections/:id/qr`, `/pairing-code`, `/restart`). Envio e recebimento
-> de mensagens e webhooks para o integrador ainda **não** estão implementados.
+> `/v1/connections/:id/qr`, `/pairing-code`, `/restart`) e mensagens de texto
+> (`POST/GET /v1/connections/:id/messages`, `GET /v1/messages/:id`), com
+> recebimento e status de entrega gravados como eventos. A entrega desses
+> eventos por webhook ao integrador ainda **não** está implementada.
 >
 > **Risco do provedor não oficial:** viola os termos de uso do WhatsApp; o
 > número pode ser banido e o protocolo pode mudar sem aviso.

@@ -5,9 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 import { createRedisAuthState } from "../src/auth-state.js";
 import {
   SessionManager,
+  SessionNotReadyError,
   type SocketHandlers,
   type WaSocket,
 } from "../src/session-manager.js";
+import type { InboundMessage, StatusUpdate } from "../src/message-mapping.js";
 import { phoneFromJid, type ConnectedAccount, type SessionStore } from "../src/store.js";
 import { FakeRedis } from "./fakes.js";
 
@@ -18,6 +20,8 @@ class FakeStore implements SessionStore {
   rows = new Map<string, { provider: string; status: ConnectionStatus; deleted: boolean }>();
   statuses: Array<[string, ConnectionStatus, string | null]> = [];
   connected: Array<[string, ConnectedAccount]> = [];
+  inbound: Array<[string, InboundMessage]> = [];
+  statusUpdates: Array<[string, StatusUpdate]> = [];
   numberInUse = false;
 
   async load(id: string) {
@@ -32,6 +36,14 @@ class FakeStore implements SessionStore {
     this.statuses.push([id, status, reason]);
     const row = this.rows.get(id);
     if (row && !row.deleted) row.status = status;
+  }
+  async recordInbound(id: string, message: InboundMessage) {
+    this.inbound.push([id, message]);
+    return true;
+  }
+  async recordStatus(id: string, update: StatusUpdate) {
+    this.statusUpdates.push([id, update]);
+    return true;
   }
   async markConnected(id: string, account: ConnectedAccount) {
     if (this.numberInUse) return "number_in_use" as const;
@@ -50,6 +62,8 @@ function setup(options: { maxSessions?: number } = {}) {
     logout: ReturnType<typeof vi.fn<() => Promise<void>>>;
     end: ReturnType<typeof vi.fn<() => void>>;
     requestPairingCode: ReturnType<typeof vi.fn<(phone: string) => Promise<string>>>;
+    newMessageId: ReturnType<typeof vi.fn<() => string>>;
+    sendText: ReturnType<typeof vi.fn<(to: string, text: string, id: string) => Promise<string>>>;
   } }> = [];
   const scheduled: Array<{ fn: () => void; ms: number }> = [];
   const manager = new SessionManager({
@@ -61,6 +75,8 @@ function setup(options: { maxSessions?: number } = {}) {
         logout: vi.fn(async () => undefined),
         end: vi.fn(),
         requestPairingCode: vi.fn(async () => "ABCD-1234"),
+        newMessageId: vi.fn(() => "3EB0TESTID"),
+        sendText: vi.fn(async (_to: string, _text: string, id: string) => id),
       };
       sockets.push({ id, handlers, socket });
       return socket;
@@ -241,6 +257,61 @@ describe("SessionManager", () => {
     expect(t.last().socket.end).toHaveBeenCalled();
     expect(t.last().socket.logout).not.toHaveBeenCalled();
     expect(t.manager.size).toBe(0);
+  });
+});
+
+describe("SessionManager messages", () => {
+  const inbound: InboundMessage = {
+    providerId: "MSG1", jid: "5511999999999@s.whatsapp.net", counterpart: "5511999999999",
+    counterpartIsPhone: true, pushName: "Ana", timestamp: new Date(0),
+    content: { type: "text", text: "oi" },
+  };
+
+  it("records inbound messages and status updates for the right connection", async () => {
+    const t = setup();
+    t.add("c1");
+    await t.manager.start("c1");
+    t.last().handlers.onMessages([inbound]);
+    t.last().handlers.onStatus([{ providerId: "OUT1", status: "delivered" }]);
+    await flush();
+    expect(t.store.inbound).toEqual([["c1", inbound]]);
+    expect(t.store.statusUpdates).toEqual([["c1", { providerId: "OUT1", status: "delivered" }]]);
+  });
+
+  it("keeps recording after one event fails", async () => {
+    const t = setup();
+    t.add("c1");
+    await t.manager.start("c1");
+    let calls = 0;
+    t.store.recordInbound = async (id, message) => {
+      calls += 1;
+      if (calls === 1) throw new Error("db down");
+      t.store.inbound.push([id, message]);
+      return true;
+    };
+    t.last().handlers.onMessages([inbound, { ...inbound, providerId: "MSG2" }]);
+    await flush();
+    await flush();
+    expect(t.store.inbound.map(([, m]) => m.providerId)).toEqual(["MSG2"]);
+  });
+
+  it("sends only through an open socket", async () => {
+    const t = setup();
+    t.add("c1");
+    await t.manager.start("c1");
+    expect(t.manager.newMessageId("c1")).toBeNull();
+    await expect(t.manager.sendText("c1", "5511", "oi", "ID")).rejects.toBeInstanceOf(SessionNotReadyError);
+
+    t.last().handlers.onOpen({ jid: "5511999999999@s.whatsapp.net", name: null });
+    await flush();
+    expect(t.manager.newMessageId("c1")).toBe("3EB0TESTID");
+    expect(await t.manager.sendText("c1", "5511888888888", "oi", "ID1")).toBe("ID1");
+    expect(t.last().socket.sendText).toHaveBeenCalledWith("5511888888888", "oi", "ID1");
+
+    t.last().handlers.onClose("other", "lost");
+    await flush();
+    await expect(t.manager.sendText("c1", "5511", "oi", "ID")).rejects.toBeInstanceOf(SessionNotReadyError);
+    await expect(t.manager.sendText("nope", "5511", "oi", "ID")).rejects.toBeInstanceOf(SessionNotReadyError);
   });
 });
 

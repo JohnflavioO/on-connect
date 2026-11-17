@@ -1,6 +1,7 @@
 import { PAIRING_CODE_TTL_SECONDS, QR_TTL_SECONDS, sessionKeys } from "@on-connect/core";
 import type { Logger } from "pino";
 import type { StoredAuthState } from "./auth-state.js";
+import type { InboundMessage, StatusUpdate } from "./message-mapping.js";
 import type { ConnectedAccount, SessionStore } from "./store.js";
 
 /** Why a socket closed, normalized from the library's disconnect codes. */
@@ -16,6 +17,8 @@ export interface SocketHandlers {
   onOpen(account: ConnectedAccount): void;
   onClose(reason: CloseReason, detail: string): void;
   onCredsUpdate(): void;
+  onMessages(messages: InboundMessage[]): void;
+  onStatus(updates: StatusUpdate[]): void;
 }
 
 /** The part of a WhatsApp Web socket the manager drives. */
@@ -23,6 +26,18 @@ export interface WaSocket {
   logout(): Promise<void>;
   end(): void;
   requestPairingCode(phoneNumber: string): Promise<string>;
+  /** A fresh WhatsApp message id, stored before sending so retries reuse it. */
+  newMessageId(): string;
+  /** Sends text to a phone number; resolves with the WhatsApp message id. */
+  sendText(phoneNumber: string, text: string, messageId: string): Promise<string>;
+}
+
+/** Thrown when a send targets a connection with no open socket here. */
+export class SessionNotReadyError extends Error {
+  constructor(readonly connectionId: string) {
+    super("connection_not_ready");
+    this.name = "SessionNotReadyError";
+  }
 }
 
 export type SocketFactory = (
@@ -55,6 +70,8 @@ interface Running {
   stopping: boolean;
   qrSeen: boolean;
   qrWaiters: Array<() => void>;
+  /** True between "open" and the next close: sends are only attempted then. */
+  open: boolean;
 }
 
 const MAX_BACKOFF_MS = 60_000;
@@ -165,6 +182,7 @@ export class SessionManager {
       stopping: false,
       qrSeen: false,
       qrWaiters: [],
+      open: false,
     };
     this.sessions.set(connectionId, session);
     await store.setStatus(connectionId, "connecting", "starting");
@@ -188,7 +206,48 @@ export class SessionManager {
           this.options.logger.error({ connectionId, err: error }, "failed to save credentials");
         });
       },
+      onMessages: (messages) => {
+        void this.record(connectionId, messages.map((m) => () =>
+          this.options.store.recordInbound(connectionId, m)));
+      },
+      onStatus: (updates) => {
+        void this.record(connectionId, updates.map((u) => () =>
+          this.options.store.recordStatus(connectionId, u)));
+      },
     });
+  }
+
+  /** Persists events one by one; a failure is logged and does not stop the rest. */
+  private async record(connectionId: string, tasks: Array<() => Promise<unknown>>): Promise<void> {
+    for (const task of tasks) {
+      try {
+        await task();
+      } catch (error) {
+        // Never log message content: only ids and the error.
+        this.options.logger.error({ connectionId, err: error }, "failed to record message event");
+      }
+    }
+  }
+
+  /**
+   * Sends a text through the connection's socket. Throws SessionNotReadyError
+   * when the socket is not open here, so the caller can retry later.
+   */
+  async sendText(
+    connectionId: string,
+    phoneNumber: string,
+    text: string,
+    messageId: string,
+  ): Promise<string> {
+    const session = this.sessions.get(connectionId);
+    if (!session?.open || !session.socket) throw new SessionNotReadyError(connectionId);
+    return session.socket.sendText(phoneNumber, text, messageId);
+  }
+
+  /** A WhatsApp message id from the connection's socket, or null if not open. */
+  newMessageId(connectionId: string): string | null {
+    const session = this.sessions.get(connectionId);
+    return session?.open && session.socket ? session.socket.newMessageId() : null;
   }
 
   private async handleQr(connectionId: string, session: Running, qr: string): Promise<void> {
@@ -208,6 +267,7 @@ export class SessionManager {
   ): Promise<void> {
     if (session.stopping) return;
     session.attempts = 0;
+    session.open = true;
     await this.options.redis.del(sessionKeys.qr(connectionId));
     const outcome = await this.options.store.markConnected(connectionId, account);
     if (outcome === "number_in_use") {
@@ -226,6 +286,7 @@ export class SessionManager {
   ): Promise<void> {
     if (session.stopping || this.sessions.get(connectionId) !== session) return;
     const { store, logger } = this.options;
+    session.open = false;
     logger.info({ connectionId, reason, detail }, "whatsapp session closed");
 
     if (reason === "logged_out") {

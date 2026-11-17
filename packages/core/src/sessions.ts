@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import { DEFAULT_JOB_OPTIONS, QUEUE_NAMES, QUEUE_PREFIX } from "./queues.js";
+import { DEFAULT_JOB_OPTIONS, QUEUE_NAMES, QUEUE_PREFIX, type OutboundJob } from "./queues.js";
 import type { RedisClient } from "./redis.js";
 
 /**
@@ -36,6 +36,11 @@ export interface SessionGateway {
   currentQr(connectionId: string): Promise<string | null>;
   /** Asks the socket for a pairing code and waits for it. Null on timeout. */
   requestPairingCode(connectionId: string, phoneNumber: string): Promise<string | null>;
+  /**
+   * Hands a stored outbound message to the sessions process. The job id is
+   * the message id, so a replay from the outbox never sends twice.
+   */
+  dispatchMessage(messageId: string): Promise<void>;
 }
 
 export interface SessionGatewayOptions {
@@ -50,6 +55,7 @@ export function createSessionGateway(options: SessionGatewayOptions): SessionGat
   const { redis } = options;
   const pairingTimeoutMs = options.pairingTimeoutMs ?? 15_000;
   const pollIntervalMs = options.pollIntervalMs ?? 500;
+  const outbound = createOutboundQueue(redis);
   const queue = new Queue<SessionCommand>(QUEUE_NAMES.sessions, {
     connection: redis,
     prefix: QUEUE_PREFIX,
@@ -79,6 +85,32 @@ export function createSessionGateway(options: SessionGatewayOptions): SessionGat
       return null;
     },
 
-    close: () => queue.close(),
+    dispatchMessage: (messageId) => enqueueOutbound(outbound, messageId),
+
+    close: async () => {
+      await Promise.all([queue.close(), outbound.close()]);
+    },
   };
+}
+
+/**
+ * Outbound sends retry for about 10 minutes (a session may be reconnecting);
+ * after the last attempt the sessions process marks the message failed.
+ */
+export const OUTBOUND_ATTEMPTS = 8;
+
+export function createOutboundQueue(redis: RedisClient): Queue<OutboundJob> {
+  return new Queue<OutboundJob>(QUEUE_NAMES.outbound, {
+    connection: redis,
+    prefix: QUEUE_PREFIX,
+    defaultJobOptions: {
+      ...DEFAULT_JOB_OPTIONS,
+      attempts: OUTBOUND_ATTEMPTS,
+      backoff: { type: "exponential", delay: 5_000 },
+    },
+  });
+}
+
+export async function enqueueOutbound(queue: Queue<OutboundJob>, messageId: string): Promise<void> {
+  await queue.add("send", { messageId }, { jobId: messageId });
 }
