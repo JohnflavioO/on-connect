@@ -231,6 +231,48 @@ select pg_temp.expect_failure(
   '42501', 'authenticated has no access to the schema');
 reset role;
 
+-- ------------------------------------------------ API credential lookup
+set local role onconnect_system;
+insert into onconnect.client_api_credentials (client_id, label, key_prefix, secret_hash)
+  values (:client_a, 'isolation', 'isolationPrefix1', 'hmac-sha256$00');
+reset role;
+
+set local role onconnect_app;
+set local onconnect.client_id = '';
+select pg_temp.expect_count(
+  'select 1 from onconnect.client_api_credentials', 0,
+  'app without context cannot list credentials');
+select pg_temp.expect_count(
+  format($$select 1 from onconnect.lookup_api_credential('isolationPrefix1')
+           where client_id = %L and client_status = 'active'$$, :client_a),
+  1, 'lookup resolves the exact prefix to its client');
+select pg_temp.expect_count(
+  $$select 1 from onconnect.lookup_api_credential('isolationPrefix')$$, 0,
+  'lookup requires the exact prefix');
+select pg_temp.expect_count(
+  $$select 1 from onconnect.lookup_api_credential('%')$$, 0,
+  'lookup does not treat the prefix as a pattern');
+select pg_temp.expect_count(
+  $$select 1 where pg_has_role('onconnect_app', 'onconnect_auth', 'MEMBER')$$,
+  0, 'app is not a member of the auth role');
+select pg_temp.expect_count(
+  $$select 1 where has_schema_privilege('onconnect_auth', 'onconnect', 'CREATE')$$,
+  0, 'auth role cannot create objects in the schema');
+select pg_temp.expect_count(
+  $$select 1 where has_table_privilege('onconnect_auth', 'onconnect.client_api_credentials', 'UPDATE')
+              or has_table_privilege('onconnect_auth', 'onconnect.clients', 'UPDATE')$$,
+  0, 'auth role is read-only');
+reset role;
+
+select pg_temp.expect_failure(
+  $$set local role anon; select 1 from onconnect.lookup_api_credential('isolationPrefix1')$$,
+  '42501', 'anon cannot call the credential lookup');
+reset role;
+select pg_temp.expect_failure(
+  $$set local role authenticated; select 1 from onconnect.lookup_api_credential('isolationPrefix1')$$,
+  '42501', 'authenticated cannot call the credential lookup');
+reset role;
+
 -- Every table in the schema must have RLS enabled and forced.
 select pg_temp.expect_count(
   $$select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
