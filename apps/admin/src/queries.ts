@@ -278,7 +278,122 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
       await audit(admin, row.client_id, "webhook_endpoint.reactivated", "webhook_endpoint", id);
       return true;
     },
+
+    /**
+     * Platform health over a rolling window: what is wrong now and how the
+     * traffic moved, in buckets sized to the window. Counts and timings only.
+     */
+    async monitoring(period: MonitoringPeriod) {
+      const { window, stride } = MONITORING_WINDOWS[period];
+      const [totals] = await run<MonitoringTotals>(
+        `WITH w AS (SELECT now() - $1::interval AS since)
+         SELECT
+           (SELECT count(*) FROM onconnect.connections WHERE deleted_at IS NULL) AS live,
+           (SELECT count(*) FROM onconnect.connections WHERE deleted_at IS NULL AND status = 'connected') AS connected,
+           (SELECT count(*) FROM onconnect.webhook_events, w
+             WHERE event_type = 'connection.status' AND created_at >= w.since
+               AND payload ->> 'status' IN ('disconnected', 'error')) AS drops,
+           (SELECT count(*) FROM onconnect.messages, w
+             WHERE direction = 'inbound' AND created_at >= w.since) AS received,
+           (SELECT count(*) FROM onconnect.messages, w
+             WHERE direction = 'outbound' AND created_at >= w.since) AS sent,
+           (SELECT count(*) FROM onconnect.messages, w
+             WHERE direction = 'outbound' AND status = 'failed' AND failed_at >= w.since) AS send_failed,
+           (SELECT count(*) FROM onconnect.messages
+             WHERE direction = 'outbound' AND status IN ('queued', 'sending')
+               AND created_at < now() - interval '5 minutes') AS send_stuck,
+           (SELECT max(created_at) FROM onconnect.messages WHERE direction = 'inbound') AS last_received_at,
+           (SELECT count(*) FROM onconnect.webhook_deliveries, w
+             WHERE status = 'delivered' AND delivered_at >= w.since) AS delivered,
+           (SELECT count(*) FROM onconnect.webhook_deliveries, w
+             WHERE status = 'failed' AND updated_at >= w.since) AS retrying,
+           (SELECT count(*) FROM onconnect.webhook_deliveries, w
+             WHERE status = 'dead' AND updated_at >= w.since) AS dead,
+           (SELECT count(*) FROM onconnect.webhook_deliveries WHERE status IN ('pending', 'failed')) AS queued,
+           (SELECT round(avg(extract(epoch FROM d.delivered_at - e.created_at) * 1000))
+              FROM onconnect.webhook_deliveries d
+              JOIN onconnect.webhook_events e ON e.id = d.event_id, w
+             WHERE d.status = 'delivered' AND d.delivered_at >= w.since) AS delivery_ms,
+           (SELECT count(*) FROM onconnect.webhook_endpoints WHERE status = 'disabled') AS disabled_endpoints`,
+        [window],
+      );
+
+      // One row per bucket, aligned to the stride, oldest first. Each series
+      // counts the moment its row changed state in that bucket.
+      const buckets = await run<MonitoringBucket>(
+        `WITH b AS (
+           SELECT generate_series(date_bin($2::interval, now() - $1::interval, timestamptz '2000-01-01'),
+                                  now(), $2::interval) AS at
+         ), m AS (
+           SELECT date_bin($2::interval, created_at, timestamptz '2000-01-01') AS at,
+                  count(*) FILTER (WHERE direction = 'inbound') AS received,
+                  count(*) FILTER (WHERE direction = 'outbound') AS sent
+             FROM onconnect.messages WHERE created_at >= now() - $1::interval - $2::interval GROUP BY 1
+         ), f AS (
+           SELECT date_bin($2::interval, failed_at, timestamptz '2000-01-01') AS at, count(*) AS send_failed
+             FROM onconnect.messages
+            WHERE status = 'failed' AND failed_at >= now() - $1::interval - $2::interval GROUP BY 1
+         ), ok AS (
+           SELECT date_bin($2::interval, delivered_at, timestamptz '2000-01-01') AS at, count(*) AS delivered
+             FROM onconnect.webhook_deliveries
+            WHERE status = 'delivered' AND delivered_at >= now() - $1::interval - $2::interval GROUP BY 1
+         ), bad AS (
+           SELECT date_bin($2::interval, updated_at, timestamptz '2000-01-01') AS at, count(*) AS webhook_failed
+             FROM onconnect.webhook_deliveries
+            WHERE status IN ('failed', 'dead') AND updated_at >= now() - $1::interval - $2::interval GROUP BY 1
+         ), c AS (
+           SELECT date_bin($2::interval, created_at, timestamptz '2000-01-01') AS at, count(*) AS drops
+             FROM onconnect.webhook_events
+            WHERE event_type = 'connection.status' AND payload ->> 'status' IN ('disconnected', 'error')
+              AND created_at >= now() - $1::interval - $2::interval GROUP BY 1
+         )
+         SELECT b.at, coalesce(m.received, 0) AS received, coalesce(m.sent, 0) AS sent,
+                coalesce(f.send_failed, 0) AS send_failed, coalesce(ok.delivered, 0) AS delivered,
+                coalesce(bad.webhook_failed, 0) AS webhook_failed, coalesce(c.drops, 0) AS drops
+           FROM b
+           LEFT JOIN m USING (at) LEFT JOIN f USING (at) LEFT JOIN ok USING (at)
+           LEFT JOIN bad USING (at) LEFT JOIN c USING (at)
+          ORDER BY b.at`,
+        [window, stride],
+      );
+
+      const problems = await run<{
+        id: string; session_key: string | null; tenant: string; client_slug: string; status: string;
+        status_reason: string | null; status_changed_at: Date;
+      }>(
+        `SELECT c.id, c.session_key, t.external_id AS tenant, cl.slug AS client_slug, c.status,
+                c.status_reason, c.status_changed_at
+           FROM onconnect.connections c
+           JOIN onconnect.tenants t ON t.id = c.tenant_id
+           JOIN onconnect.clients cl ON cl.id = c.client_id
+          WHERE c.deleted_at IS NULL AND c.status <> 'connected'
+          ORDER BY c.status_changed_at DESC LIMIT 10`,
+      );
+      return { totals, buckets, problems };
+    },
   };
+}
+
+export type MonitoringPeriod = "1h" | "24h" | "7d" | "30d";
+
+/** Window and bucket size per period: about 24 to 60 points per chart. */
+export const MONITORING_WINDOWS: Record<MonitoringPeriod, { window: string; stride: string; label: string }> = {
+  "1h": { window: "1 hour", stride: "1 minute", label: "Última hora" },
+  "24h": { window: "24 hours", stride: "1 hour", label: "24 horas" },
+  "7d": { window: "7 days", stride: "6 hours", label: "7 dias" },
+  "30d": { window: "30 days", stride: "1 day", label: "30 dias" },
+};
+
+export interface MonitoringTotals {
+  live: string; connected: string; drops: string;
+  received: string; sent: string; send_failed: string; send_stuck: string; last_received_at: Date | null;
+  delivered: string; retrying: string; dead: string; queued: string; delivery_ms: string | null;
+  disabled_endpoints: string;
+}
+
+export interface MonitoringBucket {
+  at: Date; received: string; sent: string; send_failed: string;
+  delivered: string; webhook_failed: string; drops: string;
 }
 
 export type AdminQueries = ReturnType<typeof createAdminQueries>;

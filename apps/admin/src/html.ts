@@ -126,7 +126,7 @@ export function badge(status: string): Html {
 
 export interface PageOptions {
   title: string;
-  active: "dashboard" | "connections" | "clients" | "webhooks";
+  active: "dashboard" | "monitoring" | "connections" | "clients" | "webhooks";
   user: string | null;
   notice?: string | null;
   body: Html;
@@ -134,6 +134,7 @@ export interface PageOptions {
 
 const NAV: Array<[PageOptions["active"], string, string, IconName]> = [
   ["dashboard", "/admin", "Visão geral", "grid"],
+  ["monitoring", "/admin/monitoring", "Monitoramento", "activity"],
   ["connections", "/admin/connections", "Conexões", "connection"],
   ["clients", "/admin/clients", "Clientes", "users"],
   ["webhooks", "/admin/webhooks", "Webhooks", "webhook"],

@@ -2,6 +2,26 @@
 
 Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
 
+## Monitoramento no painel (2026-11-17)
+
+- Estado conferido: `main` em `b3cb9c3` (PRs #25 a #29 integrados); painel em produção e Tendi
+  usando o On Connect pela camada compatível com o número da própria Tendi.
+- Comparação com a D-API: faltavam Monitoramento, Relatório de mensagens, histórico por
+  conexão e a tela de conversas. Decisão do usuário: fazer **Monitoramento** agora; o painel
+  continua **sem mostrar texto de mensagens** (só contagens).
+- Branch `feat/admin-monitoring`: nova tela `/admin/monitoring` (ver `docs/admin.md`), com
+  avisos, cartões de saúde, gráficos de tráfego e falhas por período e conexões fora do ar.
+  Sem migration e sem variável nova; depois do merge, atualizar só o `admin`.
+- `pnpm check` passou; 9 testes PostgreSQL do painel passaram em banco descartável (inclui
+  janelas 1 h/24 h/7 d/30 d); visual validado em Chromium (desktop e 375 px, sem overflow).
+- **Pendência:** a migration `dapi_compat_sessions` foi aplicada pelo SQL Editor e não está no
+  histórico do Supabase (`list_migrations` mostra só 4). Registrar a versão (com ok do
+  usuário) e alinhar o nome do arquivo, como manda o CLAUDE.md.
+- D-API: o Monitoramento dela mostra 100% de falha nos webhooks da sessão antiga (o segredo do
+  callback do Tendi mudou). Esperado; desligar a sessão antiga quando o usuário decidir.
+- Próximas melhorias possíveis do painel: relatório de mensagens (sem conteúdo) e histórico
+  por conexão.
+
 ## Histórico de webhooks em revisão (2026-11-17)
 
 - PR #28 (`941aea5`) integrado; a captura do usuário confirma a nova navegação

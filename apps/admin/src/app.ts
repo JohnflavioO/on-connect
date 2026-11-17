@@ -5,7 +5,14 @@ import QRCode from "qrcode";
 import { CSS, JS } from "./assets.js";
 import { connectionTable, dashboardView } from "./dashboard.js";
 import { badge, formatDate, formatNumber, formatPhone, html, icon, maskUrl, page } from "./html.js";
-import { DELIVERY_PAGE_SIZE, type Admin, type AdminQueries } from "./queries.js";
+import { monitoringView } from "./monitoring.js";
+import {
+  DELIVERY_PAGE_SIZE,
+  MONITORING_WINDOWS,
+  type Admin,
+  type AdminQueries,
+  type MonitoringPeriod,
+} from "./queries.js";
 
 export interface AdminAppOptions {
   queries: AdminQueries;
@@ -123,6 +130,16 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     return show(reply, request, {
       title: "Dashboard", active: "dashboard", notice: noticeOf(request),
       body: dashboardView(data, rows, period),
+    });
+  });
+
+  // ---------------------------------------------------------------- Monitoring
+  app.get<{ Querystring: { period?: string } }>("/admin/monitoring", async (request, reply) => {
+    const period: MonitoringPeriod = request.query.period && Object.hasOwn(MONITORING_WINDOWS, request.query.period)
+      ? request.query.period as MonitoringPeriod : "1h";
+    return show(reply, request, {
+      title: "Monitoramento", active: "monitoring", notice: noticeOf(request),
+      body: monitoringView(await queries.monitoring(period), period),
     });
   });
 

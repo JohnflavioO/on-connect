@@ -210,4 +210,35 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
     ]);
     expect(rows.every((r) => r.actor_id === "john")).toBe(true);
   });
+
+  it("measures health per window, in buckets sized to the window", async () => {
+    // A drop and a failed send, recorded now, must show in totals and in the last bucket.
+    await sql("UPDATE onconnect.connections SET status = 'disconnected', status_reason = 'logged_out' WHERE id = $1", [CONN]);
+    await sql(
+      `INSERT INTO onconnect.messages (client_id, tenant_id, connection_id, direction, status, message_type,
+         counterpart, payload, failed_at, error_code)
+       VALUES ($1, $2, $3, 'outbound', 'failed', 'text', '5585999992222', '{}', now(), 'send_failed')`,
+      [CLIENT, TENANT, CONN],
+    );
+
+    const sizes = { "1h": [60, 61], "24h": [24, 25], "7d": [28, 29], "30d": [30, 31] } as const;
+    for (const [period, [min, max]] of Object.entries(sizes) as Array<[keyof typeof sizes, readonly [number, number]]>) {
+      const { totals, buckets, problems } = await queries.monitoring(period);
+      expect(buckets.length).toBeGreaterThanOrEqual(min);
+      expect(buckets.length).toBeLessThanOrEqual(max);
+      const first = buckets[0];
+      const last = buckets.at(-1);
+      if (!first || !last) throw new Error("no buckets");
+      // Oldest first.
+      expect(first.at.getTime()).toBeLessThan(last.at.getTime());
+      expect(Number(totals?.drops)).toBeGreaterThanOrEqual(1);
+      expect(Number(totals?.send_failed)).toBeGreaterThanOrEqual(1);
+      expect(Number(last.drops)).toBeGreaterThanOrEqual(1);
+      expect(Number(last.send_failed)).toBeGreaterThanOrEqual(1);
+      expect(problems.map((p) => p.id)).toContain(CONN);
+    }
+    const hour = await queries.monitoring("1h");
+    const sent = hour.buckets.reduce((sum, b) => sum + Number(b.sent), 0);
+    expect(sent).toBe(Number(hour.totals?.sent));
+  });
 });
