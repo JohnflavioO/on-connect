@@ -56,6 +56,8 @@ services:
       API_PORT: "8080"
       PUBLIC_API_BASE_URL: https://${API_DOMAIN}
       REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in deploy/.env}
+      API_KEY_PEPPER: ${API_KEY_PEPPER:?set API_KEY_PEPPER in deploy/.env}
     networks: [edge, data]
     stop_grace_period: 20s
 

@@ -1,4 +1,12 @@
-import { createLogger, createRedis, loadApiEnv, pingRedis } from "@on-connect/core";
+import {
+  createApiKeyAuthenticator,
+  createLogger,
+  createPostgresCredentialStore,
+  createPostgresPool,
+  createRedis,
+  loadApiEnv,
+  pingRedis,
+} from "@on-connect/core";
 import { buildApp } from "./app.js";
 
 const SHUTDOWN_TIMEOUT_MS = 15_000;
@@ -7,8 +15,18 @@ async function main(): Promise<void> {
   const env = loadApiEnv();
   const bootLogger = createLogger({ level: env.LOG_LEVEL, service: "api" });
   const redis = createRedis({ url: env.REDIS_URL, connectionName: "api", logger: bootLogger });
+  const db = createPostgresPool({ connectionString: env.DATABASE_URL, max: 10 }, (error) => {
+    bootLogger.warn({ err: error }, "idle database connection failed");
+  });
+  const authenticator = createApiKeyAuthenticator({
+    store: createPostgresCredentialStore(db),
+    pepper: env.API_KEY_PEPPER,
+    onRecordUseError: (error) => {
+      bootLogger.warn({ err: error }, "failed to record api key usage");
+    },
+  });
 
-  const app = await buildApp({ env, checkRedis: () => pingRedis(redis) });
+  const app = await buildApp({ env, checkRedis: () => pingRedis(redis), authenticator });
 
   let shuttingDown = false;
   const shutdown = (signal: string): void => {
@@ -23,10 +41,10 @@ async function main(): Promise<void> {
     forced.unref();
 
     // Stop accepting connections and let in-flight requests finish first,
-    // then release Redis.
+    // then release Redis and the database pool.
     app
       .close()
-      .then(() => redis.quit())
+      .then(() => Promise.all([redis.quit(), db.close()]))
       .then(() => process.exit(0))
       .catch((error: unknown) => {
         app.log.error({ err: error }, "error during shutdown");

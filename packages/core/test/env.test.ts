@@ -4,6 +4,8 @@ import { EnvValidationError, loadApiEnv, loadWorkerEnv } from "../src/env.js";
 const valid = {
   REDIS_URL: "redis://localhost:6379",
   PUBLIC_API_BASE_URL: "http://localhost:8080",
+  DATABASE_URL: "postgresql://onconnect_app:pw@localhost:5432/postgres",
+  API_KEY_PEPPER: "p".repeat(32),
 };
 
 describe("loadApiEnv", () => {
@@ -23,6 +25,19 @@ describe("loadApiEnv", () => {
       const message = (error as Error).message;
       expect(message).toContain("REDIS_URL");
       expect(message).toContain("PUBLIC_API_BASE_URL");
+      expect(message).toContain("DATABASE_URL");
+      expect(message).toContain("API_KEY_PEPPER");
+    }
+  });
+
+  it("rejects a short pepper without echoing it", () => {
+    const shortPepper = "tooshort-s3cr3t";
+    try {
+      loadApiEnv({ ...valid, API_KEY_PEPPER: shortPepper });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).message).toContain("API_KEY_PEPPER");
+      expect((error as Error).message).not.toContain(shortPepper);
     }
   });
 

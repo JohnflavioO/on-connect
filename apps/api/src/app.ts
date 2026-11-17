@@ -2,15 +2,18 @@ import { randomUUID } from "node:crypto";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import sensible from "@fastify/sensible";
-import { loggerOptions, type ApiEnv } from "@on-connect/core";
+import { loggerOptions, type ApiEnv, type ApiKeyAuthenticator } from "@on-connect/core";
 import Fastify, { type FastifyInstance } from "fastify";
 import { healthRoutes } from "./routes/health.js";
+import { v1Routes } from "./routes/v1.js";
 
 /** External dependencies the API needs. Injected so tests can replace them. */
 export interface AppDependencies {
   env: ApiEnv;
   /** Resolves true when Redis is reachable. */
   checkRedis: () => Promise<boolean>;
+  /** Verifies integrator API keys. */
+  authenticator: ApiKeyAuthenticator;
 }
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
@@ -81,6 +84,7 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
   });
 
   await app.register(healthRoutes, { prefix: "/health", checkRedis: deps.checkRedis });
+  await app.register(v1Routes, { prefix: "/v1", authenticator: deps.authenticator });
 
   return app;
 }
