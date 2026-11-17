@@ -20,6 +20,10 @@ Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
 - Conexão WhatsApp Web por QR/código de pareamento; sessão sobrevive a reinício.
 - Recebimento de mensagens (1:1) e envio de texto com status `sent`/`delivered`.
   `read` depende do destinatário ter confirmação de leitura ligada.
+- Webhooks (2026-11-17): endpoint de teste no webhook.site recebeu `message.received` em 1,3 s,
+  HTTP 200 na 1ª tentativa, payload no formato de `docs/webhooks.md`. Criação e exclusão pela
+  API conferidas no banco e na auditoria; o endpoint de teste foi apagado. Nenhum endpoint
+  cadastrado agora. `message.status` só coberto por testes automatizados.
 
 ### Dados existentes (sem segredos)
 - Cliente `tendi`, id `1387b40c-a1d1-45b1-8b11-aa90bb52d2be`.
@@ -30,14 +34,10 @@ Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
   `23762486-ee44-4017-8c4d-53e1d39e6265` ligada a um número de teste.
 
 ## Próximos passos, em ordem
-1. **Webhooks: teste ponta a ponta.** Em produção desde 2026-11-17 (PR #17; doc para o
-   integrador em `docs/webhooks.md`), mas ainda sem nenhum endpoint cadastrado. Cadastrar um
-   endpoint HTTPS de teste com a chave do Tendi, mandar uma mensagem para o número de teste e
-   conferir a entrega e a assinatura (`webhook_deliveries.status = 'delivered'`).
-2. **Limpeza de acesso**: apagar `/root/tendi-api-key.txt` na VPS depois de guardar a chave no
+1. **Limpeza de acesso**: apagar `/root/tendi-api-key.txt` na VPS depois de guardar a chave no
    Tendi e num gerenciador de senhas; criar usuário de deploy sem root; remover chaves SSH não usadas.
-3. **Configurar o Tendi**: URL base, API key, `maxConnections` dos tenants, endpoint de webhook.
-4. Depois: `scopes` das API keys, idempotência por `Idempotency-Key`, mídia (envio/download),
+2. **Configurar o Tendi**: URL base, API key, `maxConnections` dos tenants, endpoint de webhook.
+3. Depois: `scopes` das API keys, idempotência por `Idempotency-Key`, mídia (envio/download),
    Meta Cloud API como segundo provedor.
 
 ## Acesso à VPS a partir de outro computador
