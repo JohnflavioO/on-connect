@@ -3,7 +3,8 @@
  *
  *   API_KEY_PEPPER=... pnpm --filter @on-connect/api issue-key -- <client-uuid> <label> [expires-at-iso]
  *
- * Prints the key once and the INSERT an operator runs as onconnect_system.
+ * Prints the key once and the INSERT an operator runs with admin rights
+ * (Supabase SQL Editor as postgres, which bypasses RLS, or as onconnect_system).
  * The script never connects to the database, so it needs no system credentials,
  * and the key itself is never stored anywhere.
  */
@@ -34,7 +35,7 @@ const issued = generateApiKey(pepper);
 const expiry = expiresAt === undefined ? "null" : sqlLiteral(new Date(expiresAt).toISOString());
 
 console.log(`API key (shown once, deliver it over a secure channel):\n\n  ${issued.key}\n`);
-console.log("Run as onconnect_system:\n");
+console.log("Run in the Supabase SQL Editor (postgres) or as onconnect_system:\n");
 console.log(
   `insert into onconnect.client_api_credentials (client_id, label, key_prefix, secret_hash, expires_at)\n` +
     `  values (${sqlLiteral(clientId)}, ${sqlLiteral(label)}, ${sqlLiteral(issued.prefix)}, ` +

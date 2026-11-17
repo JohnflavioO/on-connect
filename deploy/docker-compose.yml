@@ -58,6 +58,11 @@ services:
       REDIS_URL: redis://redis:6379
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in deploy/.env}
       API_KEY_PEPPER: ${API_KEY_PEPPER:?set API_KEY_PEPPER in deploy/.env}
+    volumes:
+      # Supabase signs its database certificates with its own root CA, which
+      # Node does not trust by default. DATABASE_URL points sslrootcert here
+      # so the connection is verified instead of merely encrypted.
+      - ./supabase-ca.crt:/run/certs/supabase-ca.crt:ro
     networks: [edge, data]
     stop_grace_period: 20s
 
