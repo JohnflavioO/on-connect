@@ -12,7 +12,8 @@
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "issue-key": "tsx --env-file-if-exists=../../.env src/scripts/issue-api-key.ts"
   },
   "dependencies": {
     "@fastify/helmet": "^13.2.0",

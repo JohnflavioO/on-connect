@@ -47,8 +47,12 @@ export async function withClientTransaction<T>(
   principal: AuthenticatedPrincipal,
   callback: (tx: ClientTransaction) => Promise<T>,
 ): Promise<T> {
-  if (!principal || typeof principal.clientId !== "string" ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(principal.clientId)) {
+  // Runtime check on top of the type: callers from untyped code or casts
+  // must still fail closed before a connection is checked out.
+  const clientId: unknown = (principal as Partial<AuthenticatedPrincipal> | null | undefined)
+    ?.clientId;
+  if (typeof clientId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId)) {
     throw new Error("Authenticated client identity required");
   }
 
@@ -72,7 +76,9 @@ export async function withClientTransaction<T>(
         await connection.query("ROLLBACK");
       } catch (rollbackError) {
         destroy = true;
-        throw new AggregateError([error, rollbackError], "Transaction and rollback failed");
+        throw new AggregateError([error, rollbackError], "Transaction and rollback failed", {
+          cause: rollbackError,
+        });
       }
     }
     throw error;

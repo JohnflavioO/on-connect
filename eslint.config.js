@@ -26,7 +26,7 @@ export default tseslint.config(
   },
   {
     // Boot failure is reported before a logger exists.
-    files: ["apps/*/src/server.ts", "apps/*/src/main.ts"],
+    files: ["apps/*/src/server.ts", "apps/*/src/main.ts", "apps/*/src/scripts/**/*.ts"],
     rules: { "no-console": "off" },
   },
   {

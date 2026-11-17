@@ -1,14 +1,48 @@
-import { loadApiEnv } from "@on-connect/core";
+import {
+  createApiKeyAuthenticator,
+  generateApiKey,
+  loadApiEnv,
+  type CredentialRecord,
+} from "@on-connect/core";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
+
+const PEPPER = "api-test-pepper-api-test-pepper-api-test";
+const CLIENT_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const CLIENT_B = "bbbbbbbb-0000-4000-8000-000000000001";
 
 const baseEnv = {
   NODE_ENV: "test",
   LOG_LEVEL: "silent",
   REDIS_URL: "redis://localhost:6379",
   PUBLIC_API_BASE_URL: "http://localhost:8080",
+  DATABASE_URL: "postgresql://onconnect_app:unused@localhost:5432/postgres",
+  API_KEY_PEPPER: PEPPER,
 };
+
+// In-memory credential table: key A is valid, key B belongs to another
+// client, the revoked key is revoked.
+const keyA = generateApiKey(PEPPER);
+const keyB = generateApiKey(PEPPER);
+const revokedKey = generateApiKey(PEPPER);
+const credentials = new Map<string, CredentialRecord>([
+  [keyA.prefix, record("cred-a", CLIENT_A, keyA.secretHash)],
+  [keyB.prefix, record("cred-b", CLIENT_B, keyB.secretHash)],
+  [revokedKey.prefix, { ...record("cred-r", CLIENT_A, revokedKey.secretHash), revokedAt: new Date() }],
+]);
+
+function record(credentialId: string, clientId: string, secretHash: string): CredentialRecord {
+  return {
+    credentialId, clientId, secretHash, scopes: ["messages:send"],
+    expiresAt: null, revokedAt: null, clientStatus: "active",
+  };
+}
+
+const authenticator = createApiKeyAuthenticator({
+  pepper: PEPPER,
+  store: { findByPrefix: async (prefix) => credentials.get(prefix) ?? null },
+});
 
 let app: FastifyInstance | undefined;
 
@@ -16,7 +50,11 @@ async function start(
   overrides: Record<string, string> = {},
   checkRedis: () => Promise<boolean> = async () => true,
 ): Promise<FastifyInstance> {
-  app = await buildApp({ env: loadApiEnv({ ...baseEnv, ...overrides }), checkRedis });
+  app = await buildApp({
+    env: loadApiEnv({ ...baseEnv, ...overrides }),
+    checkRedis,
+    authenticator,
+  });
   return app;
 }
 
@@ -109,5 +147,91 @@ describe("request handling", () => {
 
     const probe = await instance.inject({ method: "GET", url: "/health/live" });
     expect(probe.statusCode).toBe(200);
+  });
+});
+
+describe("API key authentication", () => {
+  const me = (instance: FastifyInstance, headers: Record<string, string> = {}, url = "/v1/me") =>
+    instance.inject({ method: "GET", url, headers });
+
+  it("resolves the principal from a valid bearer key", async () => {
+    const instance = await start();
+    const response = await me(instance, { authorization: `Bearer ${keyA.key}` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      clientId: CLIENT_A,
+      credentialId: "cred-a",
+      scopes: ["messages:send"],
+    });
+  });
+
+  it("ignores client ids forged in headers, query and body", async () => {
+    const instance = await start();
+    const response = await instance.inject({
+      method: "GET",
+      url: `/v1/me?client_id=${CLIENT_B}&clientId=${CLIENT_B}`,
+      headers: {
+        authorization: `Bearer ${keyA.key}`,
+        "x-client-id": CLIENT_B,
+        "x-on-connect-client": CLIENT_B,
+      },
+    });
+    expect(response.json<{ clientId: string }>().clientId).toBe(CLIENT_A);
+  });
+
+  it.each([
+    ["no header", {}],
+    ["empty bearer", { authorization: "Bearer " }],
+    ["basic scheme", { authorization: `Basic ${keyA.key}` }],
+    ["raw key without scheme", { authorization: keyA.key }],
+    ["malformed key", { authorization: "Bearer onc_nope" }],
+    ["unknown key", { authorization: `Bearer ${generateApiKey(PEPPER).key}` }],
+    ["wrong secret", { authorization: `Bearer onc_${keyA.prefix}_${"A".repeat(43)}` }],
+    ["revoked key", { authorization: `Bearer ${revokedKey.key}` }],
+    ["key in custom header", { "x-api-key": keyA.key }],
+  ] as const)("rejects %s with a generic 401", async (_label, headers) => {
+    const instance = await start();
+    const response = await me(instance, headers);
+    expect(response.statusCode).toBe(401);
+    expect(response.headers["www-authenticate"]).toContain("Bearer");
+    const body = response.json<{ error: string; message: string }>();
+    expect(body.error).toBe("unauthorized");
+    expect(body.message).toBe("Missing or invalid API key");
+  });
+
+  it("does not accept a key passed in the query string", async () => {
+    const instance = await start();
+    const response = await me(instance, {}, `/v1/me?api_key=${keyA.key}`);
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("accepts the bearer scheme case-insensitively", async () => {
+    const instance = await start();
+    const response = await me(instance, { authorization: `bearer ${keyA.key}` });
+    expect(response.statusCode).toBe(200);
+  });
+
+  it("keeps health probes public", async () => {
+    const instance = await start();
+    const response = await instance.inject({ method: "GET", url: "/health/live" });
+    expect(response.statusCode).toBe(200);
+  });
+
+  it("returns 500 without details when the credential store fails", async () => {
+    app = await buildApp({
+      env: loadApiEnv(baseEnv),
+      checkRedis: async () => true,
+      authenticator: createApiKeyAuthenticator({
+        pepper: PEPPER,
+        store: {
+          findByPrefix: async () => {
+            throw new Error("password authentication failed for onconnect_app");
+          },
+        },
+      }),
+    });
+    const response = await me(app, { authorization: `Bearer ${keyA.key}` });
+    expect(response.statusCode).toBe(500);
+    expect(response.body).not.toContain("onconnect_app");
   });
 });

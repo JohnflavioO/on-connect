@@ -100,7 +100,7 @@ jobs:
       - name: Run real PostgreSQL transaction integration tests
         env:
           RUN_POSTGRES_INTEGRATION: "1"
-        run: pnpm --filter @on-connect/core exec vitest run test/postgres.integration.test.ts
+        run: pnpm --filter @on-connect/core exec vitest run integration.test.ts
 
   docker:
     name: Docker images build

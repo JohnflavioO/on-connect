@@ -24,6 +24,12 @@ const apiSchema = baseSchema.extend({
   PUBLIC_API_BASE_URL: z.url(),
   /** Requests allowed per client IP per minute before a 429 is returned. */
   RATE_LIMIT_MAX_PER_MINUTE: z.coerce.number().int().positive().default(300),
+  /** Connection string for the onconnect_app role (never postgres/service_role). */
+  DATABASE_URL: z
+    .string()
+    .regex(/^postgres(ql)?:\/\//, "DATABASE_URL must start with postgres:// or postgresql://"),
+  /** Server-side HMAC key for API-key verifiers. Rotating it invalidates every key. */
+  API_KEY_PEPPER: z.string().min(32, "API_KEY_PEPPER must have at least 32 characters"),
 });
 
 const workerSchema = baseSchema.extend({

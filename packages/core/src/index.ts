@@ -33,3 +33,22 @@ export {
 } from "./db-transaction.js";
 
 export { createPostgresPool } from "./postgres.js";
+
+export {
+  MIN_PEPPER_LENGTH,
+  createApiKeyAuthenticator,
+  generateApiKey,
+  hashApiKeySecret,
+  parseApiKey,
+  verifyApiKeySecret,
+  type ApiKeyAuthenticator,
+  type ApiKeyAuthenticatorOptions,
+  type ApiKeyPrincipal,
+  type AuthFailureReason,
+  type AuthResult,
+  type CredentialRecord,
+  type CredentialStore,
+  type IssuedApiKey,
+  type ParsedApiKey,
+} from "./api-keys.js";
+export { createPostgresCredentialStore } from "./credential-store.js";
