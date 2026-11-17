@@ -1,4 +1,4 @@
-import type { DatabasePool, SealedParts } from "@on-connect/core";
+import type { DatabasePool, SealedParts, WebhookPayloadFormat } from "@on-connect/core";
 
 /** A delivery the worker holds a lease on, with everything needed to send it. */
 export interface ClaimedDelivery {
@@ -15,6 +15,9 @@ export interface ClaimedDelivery {
   url: string;
   secret: SealedParts;
   secretKeyVersion: number;
+  payloadFormat: WebhookPayloadFormat;
+  /** The integrator's session id for the event's connection, if it has one. */
+  sessionId: string | null;
 }
 
 export interface FailurePolicy {
@@ -37,6 +40,8 @@ export interface DeliveryStore {
    */
   claimDue(limit: number, leaseSeconds: number): Promise<ClaimedDelivery[]>;
   markDelivered(id: string, attempt: number, statusCode: number): Promise<void>;
+  /** Ends a delivery that cannot be sent, without counting against the endpoint. */
+  markSkipped(id: string, attempt: number, reason: string): Promise<void>;
   /** `retryAt` null: no attempts left, the delivery is dead. */
   markFailed(
     id: string,
@@ -62,6 +67,8 @@ interface ClaimRow {
   secret_nonce: Buffer;
   secret_auth_tag: Buffer;
   secret_key_version: number;
+  payload_format: WebhookPayloadFormat;
+  session_key: string | null;
 }
 
 export function createPostgresDeliveryStore(pool: DatabasePool): DeliveryStore {
@@ -96,7 +103,10 @@ export function createPostgresDeliveryStore(pool: DatabasePool): DeliveryStore {
           WHERE d.id = due.id AND ev.id = d.event_id AND e.id = d.endpoint_id AND t.id = ev.tenant_id
          RETURNING d.id, d.attempts, ev.id AS event_id, ev.event_type, ev.payload, ev.occurred_at,
                    t.external_id AS tenant_external_id, ev.connection_id, e.id AS endpoint_id, e.url,
-                   e.secret_ciphertext, e.secret_nonce, e.secret_auth_tag, e.secret_key_version`,
+                   e.secret_ciphertext, e.secret_nonce, e.secret_auth_tag, e.secret_key_version,
+                   e.payload_format,
+                   (SELECT c.session_key FROM onconnect.connections c
+                     WHERE c.id = ev.connection_id) AS session_key`,
         [limit, leaseSeconds],
       );
       return result.rows.map((row) => ({
@@ -112,6 +122,8 @@ export function createPostgresDeliveryStore(pool: DatabasePool): DeliveryStore {
         url: row.url,
         secret: { ciphertext: row.secret_ciphertext, nonce: row.secret_nonce, tag: row.secret_auth_tag },
         secretKeyVersion: row.secret_key_version,
+        payloadFormat: row.payload_format,
+        sessionId: row.session_key,
       }));
     },
 
@@ -128,6 +140,15 @@ export function createPostgresDeliveryStore(pool: DatabasePool): DeliveryStore {
            FROM d
           WHERE e.id = d.endpoint_id AND (e.consecutive_failures <> 0 OR e.failing_since IS NOT NULL)`,
         [id, attempt, statusCode],
+      );
+    },
+
+    async markSkipped(id, attempt, reason) {
+      await run(
+        `UPDATE onconnect.webhook_deliveries
+            SET status = 'dead', last_error = $3
+          WHERE id = $1 AND attempts = $2 AND status IN ('pending', 'failed')`,
+        [id, attempt, reason.slice(0, 200)],
       );
     },
 

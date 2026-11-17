@@ -14,7 +14,7 @@ Content-Type: application/json
 {
   "url": "https://tendi.example.com/webhooks/onconnect",
   "tenantExternalId": null,
-  "eventTypes": ["message.received", "message.status"]
+  "eventTypes": ["message.received", "message.status", "connection.status"]
 }
 ```
 
@@ -68,6 +68,20 @@ OnConnect-Signature: t=1795430400,v1=5d2c...
   "from": "5511999999999",
   "contactName": "Ana",
   "content": { "type": "text", "text": "olá" }
+}
+```
+
+`data` de `connection.status` (toda mudança de status de uma conexão):
+
+```json
+{
+  "connectionId": "uuid",
+  "sessionId": "id escolhido pelo integrador (camada D-API) ou null",
+  "tenantExternalId": "loja-1",
+  "status": "pending | connecting | connected | disconnected | error",
+  "previousStatus": "connecting",
+  "reason": "waiting_for_scan | logged_out | qr_expired | deleted_by_client | ...",
+  "phone": "5585999990000 ou null"
 }
 ```
 

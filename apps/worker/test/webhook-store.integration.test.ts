@@ -124,6 +124,8 @@ describe.skipIf(!enabled)("webhook deliveries as onconnect_system (PostgreSQL 17
       tenantExternalId: "shop",
       payload: { messageId: "m" },
       secretKeyVersion: 1,
+      payloadFormat: "onconnect",
+      sessionId: null,
     });
     expect(first?.secret.nonce).toHaveLength(12);
 

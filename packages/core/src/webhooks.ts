@@ -14,7 +14,7 @@ import type { AuditActor } from "./tenants.js";
  * encrypted (AES-256-GCM, bound to the endpoint id).
  */
 
-export const WEBHOOK_EVENT_TYPES = ["message.received", "message.status"] as const;
+export const WEBHOOK_EVENT_TYPES = ["message.received", "message.status", "connection.status"] as const;
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
 
 /** Endpoints per client. Each endpoint multiplies every event into a delivery. */
@@ -36,12 +36,16 @@ export interface WebhookEndpoint {
   /** Empty: every event type. */
   eventTypes: WebhookEventType[];
   status: WebhookEndpointStatus;
+  /** "dapi": D-API envelope, managed by the compatible session routes. */
+  payloadFormat: WebhookPayloadFormat;
   consecutiveFailures: number;
   failingSince: Date | null;
   disabledAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
+
+export type WebhookPayloadFormat = "onconnect" | "dapi";
 
 export function generateWebhookSecret(): string {
   return `whsec_${randomBytes(32).toString("base64url")}`;
@@ -162,6 +166,7 @@ interface EndpointRow {
   tenant_external_id: string | null;
   event_types: WebhookEventType[];
   status: WebhookEndpointStatus;
+  payload_format: WebhookPayloadFormat;
   consecutive_failures: number;
   failing_since: Date | null;
   disabled_at: Date | null;
@@ -170,7 +175,7 @@ interface EndpointRow {
 }
 
 const SELECT = `SELECT e.id, e.url, t.external_id AS tenant_external_id, e.event_types, e.status,
-       e.consecutive_failures, e.failing_since, e.disabled_at, e.created_at, e.updated_at
+       e.payload_format, e.consecutive_failures, e.failing_since, e.disabled_at, e.created_at, e.updated_at
   FROM onconnect.webhook_endpoints e
   LEFT JOIN onconnect.tenants t ON t.id = e.tenant_id AND t.client_id = e.client_id`;
 
@@ -183,6 +188,7 @@ function toEndpoint(row: EndpointRow): WebhookEndpoint {
     tenantExternalId: row.tenant_external_id,
     eventTypes: row.event_types,
     status: row.status,
+    payloadFormat: row.payload_format,
     consecutiveFailures: row.consecutive_failures,
     failingSince: row.failing_since,
     disabledAt: row.disabled_at,
@@ -232,6 +238,8 @@ export interface WebhookEndpointInput {
   url: string;
   tenantExternalId?: string | null;
   eventTypes?: WebhookEventType[];
+  /** Set only by the D-API compatible layer. */
+  payloadFormat?: WebhookPayloadFormat;
 }
 
 /** The caller must have validated the URL with checkWebhookUrl. */
@@ -272,15 +280,16 @@ export async function createWebhookEndpoint(
   await tx.query(
     `INSERT INTO onconnect.webhook_endpoints
        (id, client_id, tenant_id, url, event_types,
-        secret_ciphertext, secret_nonce, secret_auth_tag, secret_key_version)
-     VALUES ($1, onconnect.current_client_id(), $2, $3, $4::text[], $5, $6, $7, $8)`,
+        secret_ciphertext, secret_nonce, secret_auth_tag, secret_key_version, payload_format)
+     VALUES ($1, onconnect.current_client_id(), $2, $3, $4::text[], $5, $6, $7, $8, $9)`,
     [id, tenantId, input.url, eventTypes, sealed.ciphertext, sealed.nonce, sealed.tag,
-      WEBHOOK_SECRET_KEY_VERSION],
+      WEBHOOK_SECRET_KEY_VERSION, input.payloadFormat ?? "onconnect"],
   );
   await audit(tx, actor, "webhook_endpoint.created", id, {
     host: hostOf(input.url),
     tenantExternalId: input.tenantExternalId ?? null,
     eventTypes,
+    payloadFormat: input.payloadFormat ?? "onconnect",
   });
 
   const endpoint = await findWebhookEndpoint(tx, id);

@@ -169,3 +169,17 @@ Do not apply migrations to Supabase, merge, or deploy as part of this plan.
   One connection per delivery, no redirects, 10 s deadline, response body unread.
 - Delivery logs carry ids, attempt, status code and error code only — never the
   body or the URL.
+- `connection.status` events come from a trigger on `connections` (status
+  changes only), so no code path can change a status without the event.
+
+## D-API compatible layer
+
+- `/compat/dapi/api/v1` reuses the same API keys and the same client-scoped
+  repositories; the key is read only from `Authorization` (bare or Bearer).
+  Another client's session id answers "Session not found" (404).
+- `session_key` is unique per client among live connections; two clients may
+  use the same session id. Each session gets its own tenant (external id = the
+  session id, one connection).
+- The D-API webhook URL may carry the integrator's secret in its path (that is
+  how D-API webhooks are authenticated). It is stored like any endpoint URL,
+  only its host is audited, and it is never logged.

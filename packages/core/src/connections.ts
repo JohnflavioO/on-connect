@@ -13,6 +13,8 @@ export type ConnectionStatus = "pending" | "connecting" | "connected" | "disconn
 export interface Connection {
   id: string;
   tenantExternalId: string;
+  /** The integrator's own session id (D-API compatible layer), if any. */
+  sessionKey: string | null;
   provider: "whatsapp_web" | "meta_cloud";
   label: string | null;
   status: ConnectionStatus;
@@ -27,6 +29,7 @@ export interface Connection {
 interface ConnectionRow {
   id: string;
   tenant_external_id: string;
+  session_key: string | null;
   provider: Connection["provider"];
   label: string | null;
   status: ConnectionStatus;
@@ -38,7 +41,7 @@ interface ConnectionRow {
   updated_at: Date;
 }
 
-const SELECT = `SELECT c.id, t.external_id AS tenant_external_id, c.provider, c.label, c.status,
+const SELECT = `SELECT c.id, t.external_id AS tenant_external_id, c.session_key, c.provider, c.label, c.status,
        c.status_reason, c.status_changed_at, c.display_phone_number, c.verified_name,
        c.created_at, c.updated_at
   FROM onconnect.connections c
@@ -50,6 +53,7 @@ function toConnection(row: ConnectionRow): Connection {
   return {
     id: row.id,
     tenantExternalId: row.tenant_external_id,
+    sessionKey: row.session_key,
     provider: row.provider,
     label: row.label,
     status: row.status,

@@ -6,6 +6,7 @@ import {
   type Logger,
   type SecretBox,
 } from "@on-connect/core";
+import { toDapiEnvelope } from "./dapi-format.js";
 import type { ClaimedDelivery, DeliveryOutcome, DeliveryStore, FailurePolicy } from "./store.js";
 import type { WebhookRequest, WebhookSender } from "./transport.js";
 
@@ -34,20 +35,30 @@ export function retryDelaySeconds(attempt: number, random: () => number = Math.r
   return Math.round(base * (0.9 + random() * 0.2));
 }
 
-/** Body and headers the integrator receives. The payload is never logged. */
+/**
+ * Body and headers the integrator receives. The payload is never logged.
+ * Null when the endpoint's format has no equivalent for this event.
+ */
 export function buildWebhookRequest(
   delivery: ClaimedDelivery,
   secret: string,
   nowSeconds: number,
-): WebhookRequest {
-  const body = JSON.stringify({
-    id: delivery.eventId,
-    type: delivery.eventType,
-    occurredAt: delivery.occurredAt.toISOString(),
-    tenantExternalId: delivery.tenantExternalId,
-    connectionId: delivery.connectionId,
-    data: delivery.payload,
-  });
+): WebhookRequest | null {
+  let body: string;
+  if (delivery.payloadFormat === "dapi") {
+    const envelope = toDapiEnvelope(delivery);
+    if (!envelope) return null;
+    body = JSON.stringify(envelope);
+  } else {
+    body = JSON.stringify({
+      id: delivery.eventId,
+      type: delivery.eventType,
+      occurredAt: delivery.occurredAt.toISOString(),
+      tenantExternalId: delivery.tenantExternalId,
+      connectionId: delivery.connectionId,
+      data: delivery.payload,
+    });
+  }
   return {
     url: delivery.url,
     body,
@@ -114,7 +125,14 @@ export function createWebhookDispatcher(options: WebhookDispatcherOptions): Webh
     if (secret === null) {
       outcome = { statusCode: null, error: "secret_unavailable" };
     } else {
-      const result = await send(buildWebhookRequest(delivery, secret, Math.floor(now().getTime() / 1000)));
+      const request = buildWebhookRequest(delivery, secret, Math.floor(now().getTime() / 1000));
+      if (!request) {
+        // Not a failure of the endpoint: its format cannot express this event.
+        await store.markSkipped(delivery.id, delivery.attempt, "unsupported_event_for_format");
+        logger.debug({ ...context, eventType: delivery.eventType }, "webhook delivery skipped");
+        return;
+      }
+      const result = await send(request);
       if ("statusCode" in result && result.statusCode >= 200 && result.statusCode < 300) {
         await store.markDelivered(delivery.id, delivery.attempt, result.statusCode);
         logger.debug({ ...context, statusCode: result.statusCode }, "webhook delivered");
