@@ -26,6 +26,24 @@ Os dados são consultados no banco; a página não exibe conteúdo de mensagens.
 O formato de payload `dapi` aparece como **Compatibilidade**, sem alterar o
 contrato enviado aos integradores.
 
+### Histórico de webhooks
+
+Cada evento recebido ou atualização de status pode gerar uma entrega: crescer
+o histórico é esperado. O histórico tem páginas de 25 registros, botões
+Anterior/Próxima e uma tabela de altura limitada com cabeçalho fixo. Nenhum
+registro é excluído pela paginação.
+
+O filtro inicial mostra pendentes e problemas. É possível selecionar todas as
+entregas ou um status específico, combinar com tipo de evento e buscar pelo
+cliente/sessão. Ao filtrar, a navegação volta à primeira página; ao paginar,
+os filtros são preservados. A coluna **Resultado** mostra o código HTTP ou a
+falha registrada. HTTP 200 com uma tentativa indica entrega concluída pelo
+receptor, não uma repetição por erro.
+
+As páginas seguem a última atualização, com desempate pelo id. Como o histórico
+é vivo, novas entregas ou mudanças de status podem deslocar registros entre
+páginas durante a navegação.
+
 | Tela | O que tem |
 | --- | --- |
 | Dashboard | conexões ativas, mensagens enviadas e recebidas (7 dias, com gráfico), clientes e tenants, entregas de webhook aguardando e desistidas, endpoints desativados |

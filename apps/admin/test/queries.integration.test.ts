@@ -154,6 +154,38 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
     expect((await authenticator.authenticate(issued?.key)).ok).toBe(false);
   });
 
+  it("paginates and filters webhook deliveries with a deterministic order for equal timestamps", async () => {
+    const inserted = await sql<{ id: string; event_id: string }>(
+      `WITH events AS (
+         INSERT INTO onconnect.webhook_events
+           (client_id, tenant_id, connection_id, event_type, dedupe_key, payload, occurred_at)
+         SELECT $1, $2, $3, 'message.received', 'admin-page:' || gen_random_uuid(), '{}', now()
+           FROM generate_series(1, 31)
+         RETURNING id
+       )
+       INSERT INTO onconnect.webhook_deliveries (client_id, event_id, endpoint_id, status, attempts, updated_at)
+       SELECT $1, events.id, $4, 'delivered', 1, '2026-01-01T00:00:00Z'::timestamptz FROM events
+       RETURNING id, event_id`,
+      [CLIENT, TENANT, CONN, ENDPOINT],
+    );
+    try {
+      const filter = { status: "delivered", event: "message.received", search: "ADMIN-PANEL" } as const;
+      const first = await queries.deliveries("all", { ...filter, page: 1 });
+      const second = await queries.deliveries("all", { ...filter, page: 2 });
+      expect(first).toHaveLength(26); // one extra row detects the next page
+      expect(second).toHaveLength(6);
+      expect(first[25]?.id).toBe(second[0]?.id);
+      expect(new Set([...first.slice(0, 25), ...second].map((d) => d.id)).size).toBe(31);
+      expect(await queries.deliveries("all", { ...filter, page: 3 })).toEqual([]);
+      expect(await queries.deliveries("all", { ...filter, event: "message.status" })).toEqual([]);
+      expect(await queries.deliveries("all", { ...filter, search: "%" })).toEqual([]);
+      expect((await queries.deliveries("problems", { search: "admin-panel" })).map((d) => d.id)).toEqual([DELIVERY]);
+    } finally {
+      await sql("DELETE FROM onconnect.webhook_deliveries WHERE id = ANY($1::uuid[])", [inserted.map((d) => d.id)]);
+      await sql("DELETE FROM onconnect.webhook_events WHERE id = ANY($1::uuid[])", [inserted.map((d) => d.event_id)]);
+    }
+  });
+
   it("resends a dead delivery and reactivates a disabled endpoint", async () => {
     const problems = await queries.deliveries("problems");
     expect(problems.find((d) => d.id === DELIVERY)).toMatchObject({ status: "dead", session: "tendi-loja" });

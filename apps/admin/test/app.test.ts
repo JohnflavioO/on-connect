@@ -44,7 +44,7 @@ function fakeQueries() {
       payload_format: "dapi", event_types: [], status: "disabled", consecutive_failures: 12,
       failing_since: new Date(), disabled_at: new Date(), created_at: new Date(),
     }]),
-    deliveries: vi.fn(async () => []),
+    deliveries: vi.fn<AdminQueries["deliveries"]>(async () => []),
     resendDelivery: vi.fn(async () => true),
     reactivateEndpoint: vi.fn(async () => true),
   };
@@ -207,6 +207,36 @@ describe("pages", () => {
     expect(response.body).toContain("https://tendi.example.com/…");
     expect(response.body).not.toContain("s3cr3t");
     expect(response.body).toContain("Reativar");
+  });
+
+  it("shows 25 deliveries and carries active filters to both pagination links", async () => {
+    const instance = await start();
+    queries.deliveries.mockResolvedValue(Array.from({ length: 26 }, (_, n) => ({
+      id: `${n}`, client_slug: "tendi", event_type: "message.received", session: `session-row-${n}-end`,
+      url: "https://tendi.example.com/private-delivery-secret", status: "delivered", attempts: 1,
+      last_status_code: 200, last_error: null, next_attempt_at: new Date(), updated_at: new Date(),
+    })));
+    const response = await instance.inject({ method: "GET", url: "/admin/webhooks?show=all&event=message.received&q=tendi&page=2", headers: viaCaddy });
+    expect(response.statusCode).toBe(200);
+    expect(queries.deliveries).toHaveBeenCalledWith("all", { page: 2, status: undefined, event: "message.received", search: "tendi" });
+    expect(response.body).toContain("session-row-24-end");
+    expect(response.body).not.toContain("session-row-25-end");
+    expect(response.body).toContain('rel="next" href="/admin/webhooks?show=all&amp;event=message.received&amp;q=tendi&amp;page=3#deliveries"');
+    expect(response.body).toContain('rel="prev" href="/admin/webhooks?show=all&amp;event=message.received&amp;q=tendi#deliveries"');
+    expect(response.body).not.toContain("private-delivery-secret");
+  });
+
+  it("defaults to pending/problems and bounds invalid pagination and filters", async () => {
+    const instance = await start();
+    const response = await instance.inject({ method: "GET", url: "/admin/webhooks?show=invalid&event=invalid&page=-1&q=%3Cscript%3E", headers: viaCaddy });
+    expect(queries.deliveries).toHaveBeenCalledWith("problems", { page: 1, status: undefined, event: undefined, search: "<script>" });
+    expect(response.body).toContain("Nenhuma entrega encontrada nesta página.");
+    expect(response.body).toContain('value="&lt;script&gt;"');
+    expect(response.body).not.toContain("<script>");
+    expect(response.body).not.toContain('rel="prev"');
+    expect(response.body).not.toContain('rel="next"');
+    await instance.inject({ method: "GET", url: "/admin/webhooks?show=delivered&page=3", headers: viaCaddy });
+    expect(queries.deliveries).toHaveBeenLastCalledWith("all", { page: 3, status: "delivered", event: undefined, search: undefined });
   });
 
   it("answers unknown ids and pages with 404", async () => {

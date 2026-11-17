@@ -2,6 +2,22 @@
 
 Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
 
+## Histórico de webhooks em revisão (2026-11-17)
+
+- PR #28 (`941aea5`) integrado; a captura do usuário confirma a nova navegação
+  no painel da VPS. O usuário apontou que a lista de webhooks estava extensa.
+- Branch `fix/admin-webhook-pagination`: páginas de 25 entregas, tabela rolável
+  com altura limitada, Anterior/Próxima e filtros de status, evento e cliente/
+  sessão. Histórico preservado e nenhuma mudança no worker ou no receptor.
+  Coluna Erro renomeada para Resultado para não apresentar HTTP 200 como falha.
+- Build, tipos, lint e 254 testes padrão passaram; os 8 testes PostgreSQL do
+  painel passaram em banco descartável, incluindo 31 entregas com mesmo horário,
+  filtros combinados e páginas sem sobreposição nos dados estáticos. As demais
+  suítes PostgreSQL não foram executadas nesta etapa. Chromium validou avanço
+  de página, filtros, altura da tabela e layout móvel sem overflow global.
+- Commit/PR e deploy desse ajuste pendentes. Sem migration ou novas variáveis;
+  depois do merge, atualizar somente admin. Sessão antiga da D-API preservada.
+
 ## Dashboard e identidade visual em revisão (2026-11-17)
 
 - O usuário confirmou que imagem e áudio passaram a abrir após o deploy do

@@ -1493,6 +1493,59 @@ tr:hover td {
     max-width: 100%;
   }
 }
+.pagination {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  margin-top: 15px;
+  padding-top: 16px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.delivery-table {
+  max-height: 560px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.delivery-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+}
+.delivery-table:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.pagination .button {
+  font-size: 11px;
+}
+.pagination .disabled {
+  opacity: .4;
+  cursor: default;
+}
+.delivery-filters input {
+  width: min(250px, 100%);
+  font-size: 11px;
+}
+.delivery-filters label {
+  min-width: 0;
+}
+.webhook-endpoints {
+  min-width: 850px;
+}
+.delivery-table table {
+  min-width: 850px;
+}
+.delivery-table td:first-child,
+#deliveries .mono {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
