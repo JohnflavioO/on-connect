@@ -100,7 +100,9 @@ jobs:
       - name: Run real PostgreSQL transaction integration tests
         env:
           RUN_POSTGRES_INTEGRATION: "1"
-        run: pnpm --filter @on-connect/core exec vitest run integration.test.ts
+        # The files share one database and both alter the onconnect_app role,
+        # so they must not run in parallel.
+        run: pnpm --filter @on-connect/core exec vitest run --no-file-parallelism integration.test.ts
 
   docker:
     name: Docker images build
