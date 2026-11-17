@@ -14,9 +14,11 @@ Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
   Sem migration e sem variável nova; depois do merge, atualizar só o `admin`.
 - `pnpm check` passou; 9 testes PostgreSQL do painel passaram em banco descartável (inclui
   janelas 1 h/24 h/7 d/30 d); visual validado em Chromium (desktop e 375 px, sem overflow).
-- **Pendência:** a migration `dapi_compat_sessions` foi aplicada pelo SQL Editor e não está no
-  histórico do Supabase (`list_migrations` mostra só 4). Registrar a versão (com ok do
-  usuário) e alinhar o nome do arquivo, como manda o CLAUDE.md.
+- Migration `dapi_compat_sessions`: tinha sido aplicada pelo SQL Editor sem entrar no histórico
+  do Supabase. Com ok do usuário, conferido que função, grants, trigger e checks no banco
+  batem com o arquivo, e registrada em `supabase_migrations.schema_migrations` com a mesma
+  versão do arquivo (`20261117150000`), sem reexecutar nada. Histórico e `supabase/migrations`
+  agora têm as mesmas 5 versões.
 - D-API: o Monitoramento dela mostra 100% de falha nos webhooks da sessão antiga (o segredo do
   callback do Tendi mudou). Esperado; desligar a sessão antiga quando o usuário decidir.
 - Próximas melhorias possíveis do painel: relatório de mensagens (sem conteúdo) e histórico
@@ -125,8 +127,8 @@ Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
 - Banco: Supabase, projeto `yebiezsnsifsvylspsli` (região us-west-2), via session pooler
   `aws-0-us-west-2.pooler.supabase.com:5432` com TLS verificado (`deploy/supabase-ca.crt`).
 - Migrations aplicadas: `20261117020658_initial_schema`, `20261117020713_api_credential_lookup`,
-  `20261117032011_whatsapp_web_connections`, `20261117121152_webhook_delivery` (trigger de
-  fan-out ativo; ainda sem endpoints cadastrados).
+  `20261117032011_whatsapp_web_connections`, `20261117121152_webhook_delivery`,
+  `20261117150000_dapi_compat_sessions`.
 - Versão no ar: `main` em `b5c85c4` (PR #17, webhooks). `api` e `worker` reimplantados em
   2026-11-17 12:14 UTC; `sessions` segue com a imagem de `a3ff83f` (o PR #17 não o mudou).
 - `WEBHOOK_SECRET_KEY` gerada na VPS, no `deploy/.env`.
