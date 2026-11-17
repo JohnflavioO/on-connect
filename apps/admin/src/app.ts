@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import { CSS, JS } from "./assets.js";
 import { connectionTable, dashboardView } from "./dashboard.js";
 import { badge, formatDate, formatNumber, formatPhone, html, icon, maskUrl, page } from "./html.js";
-import type { Admin, AdminQueries } from "./queries.js";
+import { DELIVERY_PAGE_SIZE, type Admin, type AdminQueries } from "./queries.js";
 
 export interface AdminAppOptions {
   queries: AdminQueries;
@@ -360,12 +360,31 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
   );
 
   // ---------------------------------------------------------------- Webhooks
-  app.get<{ Querystring: { show?: string } }>("/admin/webhooks", async (request, reply) => {
-    const all = request.query.show === "all";
-    const [endpoints, deliveries] = await Promise.all([
+  app.get<{ Querystring: { show?: string; event?: string; q?: string; page?: string } }>("/admin/webhooks", async (request, reply) => {
+    const scopes = [["problems", "Pendentes e problemas"], ["all", "Todas as entregas"],
+      ["delivered", "Entregues"], ["pending", "Em fila"], ["failed", "Nova tentativa"], ["dead", "Desistidas"]] as const;
+    const events = [["", "Todos os eventos"], ["message.received", "Mensagem recebida"],
+      ["message.status", "Status de mensagem"], ["connection.status", "Status de conexão"]] as const;
+    const selected = scopes.find(([value]) => value === request.query.show)?.[0] ?? "problems";
+    const status = selected !== "all" && selected !== "problems" ? selected : undefined;
+    const event = events.find(([value]) => value === request.query.event)?.[0] || undefined;
+    const search = typeof request.query.q === "string" ? request.query.q.trim().slice(0, 100) || undefined : undefined;
+    const currentPage = typeof request.query.page === "string" && /^[1-9]\d{0,3}$/.test(request.query.page)
+      ? Number(request.query.page) : 1;
+    const href = (page: number) => {
+      const params = new URLSearchParams();
+      if (selected !== "problems") params.set("show", selected);
+      if (event) params.set("event", event);
+      if (search) params.set("q", search);
+      if (page > 1) params.set("page", String(page));
+      return `/admin/webhooks${params.size ? `?${params.toString()}` : ""}#deliveries`;
+    };
+    const [endpoints, found] = await Promise.all([
       queries.webhookEndpoints(),
-      queries.deliveries(all ? "all" : "problems"),
+      queries.deliveries(selected === "problems" ? "problems" : "all", { page: currentPage, status, event, search }),
     ]);
+    const deliveries = found.slice(0, DELIVERY_PAGE_SIZE);
+    const hasNext = found.length > DELIVERY_PAGE_SIZE;
     return show(reply, request, {
       title: "Webhooks",
       active: "webhooks",
@@ -373,7 +392,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
       body: html`
         <div class="panel">
           <h2 style="margin-top:0">Endpoints</h2>
-          <table>
+          <div class="table-wrap"><table class="webhook-endpoints">
             <thead><tr><th>Cliente</th><th>Destino</th><th>Formato</th><th>Eventos</th><th>Status</th><th>Falhas</th><th></th></tr></thead>
             <tbody>
               ${endpoints.length === 0 ? html`<tr><td colspan="7" class="muted">Nenhum endpoint.</td></tr>` : ""}
@@ -392,17 +411,21 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
                   </form>`}</td>
               </tr>`)}
             </tbody>
-          </table>
+          </table></div>
         </div>
-        <div class="panel">
-          <div class="toolbar">
-            <h2 style="margin:0">${all ? "Últimas entregas" : "Entregas com problema"}</h2>
-            <a class="button" href="/admin/webhooks${all ? "" : "?show=all"}">${all ? "Só problemas" : "Ver todas"}</a>
-          </div>
-          <table>
-            <thead><tr><th>Quando</th><th>Cliente / sessão</th><th>Evento</th><th>Status</th><th>Tentativas</th><th>Erro</th><th></th></tr></thead>
+        <section class="panel" id="deliveries">
+          <div class="section-heading"><div><h2>Histórico de entregas</h2><p class="section-description">Cada evento gera um registro. Consulte o histórico por páginas ou filtre uma sessão.</p></div><a class="button compact" href="${href(currentPage)}">${icon("refresh")} Atualizar</a></div>
+          <form class="toolbar delivery-filters" action="/admin/webhooks#deliveries" method="get">
+            <label><span class="sr-only">Status das entregas</span><select name="show">${scopes.map(([value, label]) => html`<option value="${value}" ${value === selected ? html`selected` : ""}>${label}</option>`)}</select></label>
+            <label><span class="sr-only">Tipo de evento</span><select name="event">${events.map(([value, label]) => html`<option value="${value}" ${value === (event ?? "") ? html`selected` : ""}>${label}</option>`)}</select></label>
+            <label><span class="sr-only">Cliente ou sessão</span><input name="q" value="${search ?? ""}" maxlength="100" placeholder="Cliente ou sessão…"></label>
+            <button class="button primary" type="submit">Filtrar</button><a class="button compact" href="/admin/webhooks#deliveries">Limpar</a>
+          </form>
+          <div class="list-summary"><span>Página ${formatNumber(currentPage)} · ${formatNumber(deliveries.length)} ${deliveries.length === 1 ? "registro" : "registros"}</span><span>${DELIVERY_PAGE_SIZE} registros por página</span></div>
+          <div class="table-wrap delivery-table" tabindex="0" role="region" aria-label="Entregas de webhook da página atual"><table>
+            <thead><tr><th>Quando</th><th>Cliente / sessão</th><th>Evento</th><th>Status</th><th>Tentativas</th><th>Resultado</th><th><span class="sr-only">Ações</span></th></tr></thead>
             <tbody>
-              ${deliveries.length === 0 ? html`<tr><td colspan="7" class="muted">Nada aqui.</td></tr>` : ""}
+              ${deliveries.length === 0 ? html`<tr><td colspan="7"><div class="empty-state">${icon("webhook")}<strong>Nenhuma entrega encontrada nesta página.</strong><span>Não há registros para os filtros selecionados. Consulte as outras páginas ou altere os filtros.</span></div></td></tr>` : ""}
               ${deliveries.map((delivery) => html`<tr>
                 <td class="muted">${formatDate(delivery.updated_at)}</td>
                 <td>${delivery.client_slug}<div class="muted mono">${delivery.session ?? ""}</div></td>
@@ -417,8 +440,13 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
                   </form>` : ""}</td>
               </tr>`)}
             </tbody>
-          </table>
-        </div>`,
+          </table></div>
+          <nav class="pagination" aria-label="Páginas do histórico de webhooks">
+            ${currentPage > 1 ? html`<a class="button compact" rel="prev" href="${href(currentPage - 1)}">Anterior</a>` : html`<span class="button compact disabled" aria-disabled="true">Anterior</span>`}
+            <span>Página ${formatNumber(currentPage)}</span>
+            ${hasNext && currentPage < 9999 ? html`<a class="button compact" rel="next" href="${href(currentPage + 1)}">Próxima ${icon("arrow")}</a>` : html`<span class="button compact disabled" aria-disabled="true">Próxima</span>`}
+          </nav>
+        </section>`,
     });
   });
 

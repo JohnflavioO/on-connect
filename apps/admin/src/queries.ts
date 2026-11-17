@@ -11,6 +11,14 @@ export interface Admin {
   name: string;
 }
 
+export const DELIVERY_PAGE_SIZE = 25;
+export interface DeliveryFilters {
+  page?: number;
+  status?: "pending" | "failed" | "dead" | "delivered" | undefined;
+  event?: "connection.status" | "message.received" | "message.status" | undefined;
+  search?: string | undefined;
+}
+
 export function createAdminQueries(pool: DatabasePool, pepper: string) {
   const run = async <Row>(sql: string, params: readonly unknown[] = []) => {
     const connection = await pool.connect();
@@ -214,7 +222,8 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
       );
     },
 
-    deliveries(status: "problems" | "all") {
+    deliveries(scope: "problems" | "all", filters: DeliveryFilters = {}) {
+      const page = Math.max(1, Math.min(9999, Math.floor(filters.page ?? 1) || 1));
       return run<{
         id: string; client_slug: string; event_type: string; session: string | null; url: string;
         status: string; attempts: number; last_status_code: number | null; last_error: string | null;
@@ -229,10 +238,14 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
            JOIN onconnect.clients cl ON cl.id = d.client_id
            JOIN onconnect.tenants t ON t.id = ev.tenant_id
            LEFT JOIN onconnect.connections c ON c.id = ev.connection_id
-          WHERE $1 = 'all' OR d.status IN ('pending', 'failed', 'dead')
-          ORDER BY d.updated_at DESC
-          LIMIT 200`,
-        [status],
+          WHERE ($1 = 'all' OR d.status IN ('pending', 'failed', 'dead'))
+            AND ($2::text IS NULL OR d.status = $2)
+            AND ($3::text IS NULL OR ev.event_type = $3)
+            AND ($4::text IS NULL OR strpos(lower(concat_ws(' ', cl.slug, c.session_key, t.external_id)), lower($4::text)) > 0)
+          ORDER BY d.updated_at DESC, d.id DESC
+          LIMIT $5 OFFSET $6`,
+        [scope, filters.status ?? null, filters.event ?? null, filters.search ?? null,
+          DELIVERY_PAGE_SIZE + 1, (page - 1) * DELIVERY_PAGE_SIZE],
       );
     },
 
