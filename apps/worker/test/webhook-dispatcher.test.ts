@@ -35,6 +35,8 @@ function delivery(overrides: Partial<ClaimedDelivery> = {}): ClaimedDelivery {
     url: "https://tendi.example.com/hooks",
     secret: box.sealParts(SECRET, webhookSecretContext(endpointId)),
     secretKeyVersion: 1,
+    payloadFormat: "onconnect",
+    sessionId: null,
     ...overrides,
   };
 }
@@ -42,6 +44,7 @@ function delivery(overrides: Partial<ClaimedDelivery> = {}): ClaimedDelivery {
 class FakeStore implements DeliveryStore {
   delivered: { id: string; attempt: number; statusCode: number }[] = [];
   failed: { id: string; attempt: number; outcome: DeliveryOutcome; retryAt: Date | null }[] = [];
+  skipped: { id: string; reason: string }[] = [];
   disableNext = false;
   constructor(private due: ClaimedDelivery[]) {}
 
@@ -51,6 +54,10 @@ class FakeStore implements DeliveryStore {
 
   async markDelivered(id: string, attempt: number, statusCode: number) {
     this.delivered.push({ id, attempt, statusCode });
+  }
+
+  async markSkipped(id: string, _attempt: number, reason: string) {
+    this.skipped.push({ id, reason });
   }
 
   async markFailed(id: string, attempt: number, outcome: DeliveryOutcome, retryAt: Date | null) {
@@ -146,6 +153,51 @@ describe("webhook dispatcher", () => {
     await instance.runOnce();
     expect(sent).toEqual([]);
     expect(store.failed.map((f) => f.outcome.error)).toEqual(["secret_unavailable", "secret_unavailable"]);
+  });
+
+  it("sends connection status in the D-API envelope to a D-API endpoint", async () => {
+    const store = new FakeStore([delivery({
+      payloadFormat: "dapi",
+      sessionId: "tendi-org-1",
+      eventType: "connection.status",
+      payload: { status: "connected", phone: "5585999990000", reason: null, sessionId: "tendi-org-1" },
+    })]);
+    const { instance, sent } = dispatcher(store, () => ({ statusCode: 200 }));
+    await instance.runOnce();
+    expect(JSON.parse(sent[0]?.body ?? "")).toEqual({
+      event: "connection.status",
+      sessionId: "tendi-org-1",
+      traceId: "del-1",
+      data: { status: "connected", phone: "5585999990000", reason: null, connectionId: "conn-1" },
+    });
+    expect(sent[0]?.headers["onconnect-signature"]).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
+    expect(store.delivered).toHaveLength(1);
+  });
+
+  it.each([
+    ["disconnected", "disconnected"],
+    ["error", "disconnected"],
+    ["connecting", "connecting"],
+    ["pending", "connecting"],
+  ])("maps status %s to the D-API word %s", async (status, expected) => {
+    const store = new FakeStore([delivery({
+      payloadFormat: "dapi", eventType: "connection.status", payload: { status, reason: "logged_out" },
+    })]);
+    const { instance, sent } = dispatcher(store, () => ({ statusCode: 200 }));
+    await instance.runOnce();
+    const body = JSON.parse(sent[0]?.body ?? "") as { sessionId: string; data: { status: string; reason: string } };
+    expect(body.data).toMatchObject({ status: expected, reason: "logged_out" });
+    // No session id on the connection: the connection id stands in.
+    expect(body.sessionId).toBe("conn-1");
+  });
+
+  it("skips, without blaming the endpoint, an event the D-API format cannot carry yet", async () => {
+    const store = new FakeStore([delivery({ payloadFormat: "dapi", eventType: "message.received" })]);
+    const { instance, sent } = dispatcher(store, () => ({ statusCode: 200 }));
+    await instance.runOnce();
+    expect(sent).toEqual([]);
+    expect(store.skipped).toEqual([{ id: "del-1", reason: "unsupported_event_for_format" }]);
+    expect(store.failed).toEqual([]);
   });
 
   it("keeps going when bookkeeping fails for one delivery", async () => {

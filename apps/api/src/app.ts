@@ -11,6 +11,7 @@ import {
   type SessionGateway,
 } from "@on-connect/core";
 import Fastify, { type FastifyInstance } from "fastify";
+import { dapiCompatRoutes } from "./routes/dapi-compat.js";
 import { healthRoutes } from "./routes/health.js";
 import { v1Routes } from "./routes/v1.js";
 
@@ -104,13 +105,22 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
     });
   });
 
+  const webhookSecrets = createSecretBox(env.WEBHOOK_SECRET_KEY);
   await app.register(healthRoutes, { prefix: "/health", checkRedis: deps.checkRedis });
   await app.register(v1Routes, {
     prefix: "/v1",
     authenticator: deps.authenticator,
     db: deps.db,
     sessions: deps.sessions,
-    webhookSecrets: createSecretBox(env.WEBHOOK_SECRET_KEY),
+    webhookSecrets,
+  });
+  // D-API compatible layer for integrators migrating from D-API (Tendi).
+  await app.register(dapiCompatRoutes, {
+    prefix: "/compat/dapi/api/v1",
+    authenticator: deps.authenticator,
+    db: deps.db,
+    sessions: deps.sessions,
+    webhookSecrets,
   });
 
   return app;

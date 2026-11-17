@@ -101,6 +101,7 @@ export {
   type WebhookEndpointInput,
   type WebhookEndpointPatch,
   type WebhookEndpointStatus,
+  type WebhookPayloadFormat,
   type WebhookEventType,
   type WebhookUrlProblem,
 } from "./webhooks.js";
@@ -126,3 +127,13 @@ export {
   type MessageStatus,
 } from "./messages.js";
 export { OUTBOUND_ATTEMPTS, createOutboundQueue, enqueueOutbound } from "./sessions.js";
+export {
+  CompatSessionError,
+  DAPI_COMPAT_EVENTS,
+  DAPI_SESSION_ID,
+  deleteCompatSession,
+  findCompatSession,
+  setCompatWebhook,
+  upsertCompatSession,
+  type CompatSession,
+} from "./dapi-compat.js";
