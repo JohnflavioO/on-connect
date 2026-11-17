@@ -25,4 +25,9 @@ export class FakeSessions implements SessionGateway {
   async dispatchMessage(messageId: string) {
     this.dispatched.push(messageId);
   }
+  /** Phone -> picture URL; null means "no picture"; a missing phone times out. */
+  readonly pictures = new Map<string, string | null>();
+  async requestProfilePicture(_connectionId: string, phoneNumber: string) {
+    return this.pictures.has(phoneNumber) ? this.pictures.get(phoneNumber) ?? null : undefined;
+  }
 }

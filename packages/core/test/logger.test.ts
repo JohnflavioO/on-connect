@@ -1,7 +1,15 @@
 import { Writable } from "node:stream";
 import { pino } from "pino";
 import { describe, expect, it } from "vitest";
-import { loggerOptions } from "../src/logger.js";
+import { loggerOptions, redactUrl } from "../src/logger.js";
+
+describe("redactUrl", () => {
+  it("removes the token of a media link and leaves other paths alone", () => {
+    expect(redactUrl("/media/eyJwIjoiMjAyNiJ9.c2lnbmF0dXJl")).toBe("/media/[REDACTED]");
+    expect(redactUrl("/media/abc.def?x=1")).toBe("/media/[REDACTED]?x=1");
+    expect(redactUrl("/v1/connections/1/messages")).toBe("/v1/connections/1/messages");
+  });
+});
 
 function capture(): { lines: string[]; stream: Writable } {
   const lines: string[] = [];

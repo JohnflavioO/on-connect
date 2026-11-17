@@ -2,6 +2,7 @@ import { PAIRING_CODE_TTL_SECONDS, QR_TTL_SECONDS, sessionKeys } from "@on-conne
 import type { Logger } from "pino";
 import type { StoredAuthState } from "./auth-state.js";
 import type { InboundMessage, StatusUpdate } from "./message-mapping.js";
+import type { OutgoingMedia } from "./outbound.js";
 import type { ConnectedAccount, SessionStore } from "./store.js";
 
 /** Why a socket closed, normalized from the library's disconnect codes. */
@@ -30,6 +31,10 @@ export interface WaSocket {
   newMessageId(): string;
   /** Sends text to a phone number; resolves with the WhatsApp message id. */
   sendText(phoneNumber: string, text: string, messageId: string): Promise<string>;
+  /** Sends a media file to a phone number; resolves with the WhatsApp message id. */
+  sendMedia(phoneNumber: string, media: OutgoingMedia, messageId: string): Promise<string>;
+  /** The contact's profile picture URL, or null when hidden or absent. */
+  profilePictureUrl(phoneNumber: string): Promise<string | null>;
 }
 
 /** Thrown when a send targets a connection with no open socket here. */
@@ -58,6 +63,8 @@ export interface SessionManagerOptions {
   createSocket: SocketFactory;
   logger: Logger;
   maxSessions: number;
+  /** Where downloaded media is stored; without it media arrives with no link. */
+  media?: { save(bytes: Buffer, meta: { mimetype: string | null }): Promise<string> };
   /** Injected so tests do not wait for real backoff. */
   schedule?: (fn: () => void, ms: number) => void;
   qrWaitMs?: number;
@@ -207,14 +214,33 @@ export class SessionManager {
         });
       },
       onMessages: (messages) => {
-        void this.record(connectionId, messages.map((m) => () =>
-          this.options.store.recordInbound(connectionId, m)));
+        void this.record(connectionId, messages.map((m) => async () =>
+          this.options.store.recordInbound(connectionId, await this.withMedia(connectionId, m))));
       },
       onStatus: (updates) => {
         void this.record(connectionId, updates.map((u) => () =>
           this.options.store.recordStatus(connectionId, u)));
       },
     });
+  }
+
+  /**
+   * Downloads and stores a media message's file, so the event carries a link.
+   * Any failure (too large, expired on WhatsApp, disk) keeps the message,
+   * just without the link: losing a message is worse than losing its file.
+   */
+  private async withMedia(connectionId: string, message: InboundMessage): Promise<InboundMessage> {
+    const { media, logger } = this.options;
+    if (!message.downloadMedia || !media) return message;
+    try {
+      const bytes = await message.downloadMedia();
+      if (!bytes || bytes.length === 0) return message;
+      const mimetype = typeof message.content.mimetype === "string" ? message.content.mimetype : null;
+      return { ...message, mediaUrl: await media.save(bytes, { mimetype }) };
+    } catch (error) {
+      logger.warn({ connectionId, providerId: message.providerId, err: error }, "media not stored");
+      return message;
+    }
   }
 
   /** Persists events one by one; a failure is logged and does not stop the rest. */
@@ -242,6 +268,24 @@ export class SessionManager {
     const session = this.sessions.get(connectionId);
     if (!session?.open || !session.socket) throw new SessionNotReadyError(connectionId);
     return session.socket.sendText(phoneNumber, text, messageId);
+  }
+
+  async sendMedia(
+    connectionId: string,
+    phoneNumber: string,
+    media: OutgoingMedia,
+    messageId: string,
+  ): Promise<string> {
+    const session = this.sessions.get(connectionId);
+    if (!session?.open || !session.socket) throw new SessionNotReadyError(connectionId);
+    return session.socket.sendMedia(phoneNumber, media, messageId);
+  }
+
+  /** Null when the connection is not open here, or the contact shows no picture. */
+  async profilePictureUrl(connectionId: string, phoneNumber: string): Promise<string | null> {
+    const session = this.sessions.get(connectionId);
+    if (!session?.open || !session.socket) return null;
+    return session.socket.profilePictureUrl(phoneNumber);
   }
 
   /** A WhatsApp message id from the connection's socket, or null if not open. */

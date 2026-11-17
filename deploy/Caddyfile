@@ -26,6 +26,12 @@
 
 	log {
 		output stdout
-		format json
+		# A media link's token is the credential to that file: never logged.
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp ^/media/[^/?#]+ /media/[REDACTED]
+			}
+		}
 	}
 }

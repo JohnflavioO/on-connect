@@ -8,3 +8,5 @@ coverage
 !.env.example
 .DS_Store
 *.log
+# Local received media (MEDIA_DIR in .env)
+.media

@@ -2,7 +2,7 @@ import {
   CompatSessionError,
   MessageRejectedError,
   checkWebhookUrl,
-  createOutboundText,
+  createOutboundMessage,
   deleteCompatSession,
   findCompatSession,
   findMessage,
@@ -14,6 +14,7 @@ import {
   type ApiKeyAuthenticator,
   type CompatSession,
   type DatabasePool,
+  type OutboundContent,
   type SecretBox,
   type SessionGateway,
 } from "@on-connect/core";
@@ -307,35 +308,31 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
    * an error; a send still queued (session reconnecting) is accepted and
    * retried in the background, as the native API does.
    */
-  app.post<{ Body: { sessionId: string; to: string; text: string } }>(
-    "/messages/send/text",
+  const send = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    sessionId: string,
+    rawTo: string,
+    content: OutboundContent,
+  ) => {
+    const to = rawTo.split("@")[0]?.replace(/\D/g, "") ?? "";
+    if (!/^[0-9]{8,15}$/.test(to)) return fail(reply, 400, "to must be a phone number with country code");
+    if (content.type !== "text") {
+      const issue = checkWebhookUrl(content.url);
+      if (issue) return fail(reply, 400, "media URL must be a public https URL");
+    }
     {
-      schema: {
-        body: {
-          type: "object",
-          required: ["sessionId", "to", "text"],
-          properties: {
-            sessionId: { type: "string", pattern: SESSION_ID },
-            to: { type: "string", minLength: 8, maxLength: 64 },
-            text: { type: "string", minLength: 1, maxLength: 4096 },
-          },
-        },
-      },
-    },
-    async (request, reply) => {
-      const to = request.body.to.split("@")[0]?.replace(/\D/g, "") ?? "";
-      if (!/^[0-9]{8,15}$/.test(to)) return fail(reply, 400, "to must be a phone number with country code");
       const principal = principalOf(request);
       const providerMessageId = generateWhatsappMessageId();
       let messageId: string;
       try {
         messageId = await withClientTransaction(db, principal, async (tx) => {
-          const session = await findCompatSession(tx, request.body.sessionId);
+          const session = await findCompatSession(tx, sessionId);
           if (!session) throw new MessageRejectedError("connection_not_found");
-          const message = await createOutboundText(tx, {
+          const message = await createOutboundMessage(tx, {
             connectionId: session.connectionId,
             to,
-            text: request.body.text,
+            content,
             providerMessageId,
           });
           return message.id;
@@ -354,7 +351,8 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
         request.log.error({ messageId, err: error }, "failed to dispatch outbound message");
       }
 
-      const deadline = Date.now() + sendWaitMs;
+      // Media is downloaded and uploaded to WhatsApp first: give it longer.
+      const deadline = Date.now() + (content.type === "text" ? sendWaitMs : sendWaitMs * 2.5);
       let status = "queued";
       let errorCode: string | null = null;
       while (Date.now() < deadline) {
@@ -379,6 +377,98 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
         status,
         data: { messageId: providerMessageId, id: providerMessageId, key, status },
       };
+    }
+  };
+
+  const sendSchema = (required: string[], properties: Record<string, object>) => ({
+    schema: {
+      body: {
+        type: "object",
+        required: ["sessionId", "to", ...required],
+        properties: {
+          sessionId: { type: "string", pattern: SESSION_ID },
+          to: { type: "string", minLength: 8, maxLength: 64 },
+          caption: { type: ["string", "null"], maxLength: 4096 },
+          ...properties,
+        },
+      },
+    },
+  });
+  const MEDIA_URL = { type: "string", minLength: 9, maxLength: 4096 };
+
+  type SendBody = { sessionId: string; to: string; caption?: string | null };
+
+  app.post<{ Body: SendBody & { text: string } }>(
+    "/messages/send/text",
+    sendSchema(["text"], { text: { type: "string", minLength: 1, maxLength: 4096 } }),
+    async (request, reply) => send(request, reply, request.body.sessionId, request.body.to,
+      { type: "text", text: request.body.text }),
+  );
+
+  app.post<{ Body: SendBody & { image: string } }>(
+    "/messages/send/image",
+    sendSchema(["image"], { image: MEDIA_URL }),
+    async (request, reply) => send(request, reply, request.body.sessionId, request.body.to,
+      { type: "image", url: request.body.image, caption: request.body.caption ?? null }),
+  );
+
+  app.post<{ Body: SendBody & { video: string } }>(
+    "/messages/send/video",
+    sendSchema(["video"], { video: MEDIA_URL }),
+    async (request, reply) => send(request, reply, request.body.sessionId, request.body.to,
+      { type: "video", url: request.body.video, caption: request.body.caption ?? null }),
+  );
+
+  app.post<{ Body: SendBody & { audio: string; ptt?: boolean } }>(
+    "/messages/send/audio",
+    sendSchema(["audio"], { audio: MEDIA_URL, ptt: { type: "boolean" } }),
+    async (request, reply) => send(request, reply, request.body.sessionId, request.body.to,
+      { type: "audio", url: request.body.audio, voice: request.body.ptt === true }),
+  );
+
+  app.post<{ Body: SendBody & { document: string; fileName?: string; mimetype?: string } }>(
+    "/messages/send/document",
+    sendSchema(["document"], {
+      document: MEDIA_URL,
+      fileName: { type: "string", maxLength: 255 },
+      mimetype: { type: "string", maxLength: 255 },
+    }),
+    async (request, reply) => send(request, reply, request.body.sessionId, request.body.to, {
+      type: "document",
+      url: request.body.document,
+      fileName: request.body.fileName ?? null,
+      mimetype: request.body.mimetype ?? null,
+      caption: request.body.caption ?? null,
+    }),
+  );
+
+  /**
+   * The contact's WhatsApp profile picture, asked of the session's socket.
+   * `profilePictureUrl` is null when the contact hides or has no picture.
+   */
+  app.get<{ Params: { phone: string }; Querystring: { sessionId: string } }>(
+    "/contacts/:phone/avatar",
+    {
+      schema: {
+        params: {
+          type: "object",
+          required: ["phone"],
+          properties: { phone: { type: "string", pattern: "^[0-9]{8,15}$" } },
+        },
+        querystring: {
+          type: "object",
+          required: ["sessionId"],
+          properties: { sessionId: { type: "string", pattern: SESSION_ID } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const session = await load(request, request.query.sessionId);
+      if (!session) return notFound(reply);
+      if (session.status !== "connected") return fail(reply, 400, "Session is not connected");
+      const url = await sessions.requestProfilePicture(session.connectionId, request.params.phone);
+      if (url === undefined) return fail(reply, 504, "Profile picture lookup timed out");
+      return { success: true, data: { profilePictureUrl: url, url } };
     },
   );
 

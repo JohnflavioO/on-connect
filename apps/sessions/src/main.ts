@@ -6,8 +6,11 @@ import {
   createRedis,
   OUTBOUND_ATTEMPTS,
   createOutboundQueue,
+  createMediaVault,
   createSecretBox,
   enqueueOutbound,
+  fetchPublicBytes,
+  sessionKeys,
   loadSessionsEnv,
   type OutboundJob,
   type SessionCommand,
@@ -43,15 +46,33 @@ async function main(): Promise<void> {
   });
   const box = createSecretBox(env.SESSION_STATE_KEY);
   const version = await resolveWaVersion(logger);
+  const media = createMediaVault({
+    key: env.MEDIA_KEY,
+    dir: env.MEDIA_DIR,
+    publicBaseUrl: env.PUBLIC_API_BASE_URL,
+  });
 
   const manager = new SessionManager({
     store: createPostgresSessionStore(db),
     redis,
     createAuth: (connectionId) => createRedisAuthState(redis, box, connectionId),
-    createSocket: createBaileysSocketFactory(logger, version),
+    createSocket: createBaileysSocketFactory(logger, version, { maxMediaBytes: env.MEDIA_MAX_BYTES }),
     logger,
     maxSessions: env.SESSIONS_MAX,
+    media,
   });
+
+  // Retention: whole months of media older than MEDIA_RETENTION_DAYS go.
+  const prune = async (): Promise<void> => {
+    try {
+      const removed = await media.pruneOlderThan(env.MEDIA_RETENTION_DAYS);
+      if (removed > 0) logger.info({ months: removed }, "old media deleted");
+    } catch (error) {
+      logger.error({ err: error }, "media retention failed");
+    }
+  };
+  const pruneTimer = setInterval(() => void prune(), 6 * 3_600_000);
+  pruneTimer.unref();
 
   const worker = new Worker<SessionCommand>(
     QUEUE_NAMES.sessions,
@@ -64,6 +85,12 @@ async function main(): Promise<void> {
           return manager.logout(command.connectionId);
         case "pairing-code":
           return manager.requestPairingCode(command.connectionId, command.phoneNumber);
+        case "profile-picture": {
+          // "" means "asked, none": the API tells it apart from a timeout.
+          const url = await manager.profilePictureUrl(command.connectionId, command.phoneNumber);
+          await redis.set(sessionKeys.profilePicture(command.requestId), url ?? "", "EX", 60);
+          return undefined;
+        }
       }
     },
     { connection: commandConnection, prefix: QUEUE_PREFIX, concurrency: 10 },
@@ -81,6 +108,7 @@ async function main(): Promise<void> {
   const processOutbound = createOutboundProcessor({
     store: createPostgresOutboundStore(db),
     sender: manager,
+    fetchMedia: (url) => fetchPublicBytes(url, { maxBytes: env.MEDIA_MAX_BYTES, timeoutMs: 30_000 }),
     logger,
   });
   const outboundWorker = new Worker<OutboundJob>(
@@ -126,6 +154,7 @@ async function main(): Promise<void> {
 
     // Sockets are closed, not logged out, so the next boot resumes them.
     clearInterval(replayTimer);
+    clearInterval(pruneTimer);
     Promise.all([worker.close(), outboundWorker.close(), outboundQueue.close()])
       .then(() => {
         manager.stopAll();
@@ -148,6 +177,7 @@ async function main(): Promise<void> {
   await Promise.all([worker.waitUntilReady(), outboundWorker.waitUntilReady()]);
   const restored = await manager.restoreAll();
   void replay();
+  void prune();
   logger.info({ restored, max: env.SESSIONS_MAX }, "sessions ready");
 }
 

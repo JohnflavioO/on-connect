@@ -1,18 +1,40 @@
+import type { FetchedBytes, OutboundContent } from "@on-connect/core";
 import type { Logger } from "pino";
 import { SessionNotReadyError } from "./session-manager.js";
 import type { OutboundStore } from "./store.js";
+
+/** A media file ready to hand to WhatsApp. */
+export interface OutgoingMedia {
+  type: "image" | "video" | "audio" | "document";
+  bytes: Buffer;
+  mimetype: string | null;
+  caption: string | null;
+  fileName: string | null;
+  voice: boolean;
+}
 
 /** What the processor needs from the session manager. */
 export interface Sender {
   newMessageId(connectionId: string): string | null;
   sendText(connectionId: string, phoneNumber: string, text: string, messageId: string): Promise<string>;
+  sendMedia(connectionId: string, phoneNumber: string, media: OutgoingMedia, messageId: string): Promise<string>;
 }
+
+/** Downloads the file of a media message (public HTTPS only, size-capped). */
+export type MediaFetcher = (url: string) => Promise<FetchedBytes>;
 
 export interface OutboundAttempt {
   messageId: string;
   /** 1-based attempt number. */
   attempt: number;
   maxAttempts: number;
+}
+
+class MediaUnavailableError extends Error {
+  constructor(readonly code: string) {
+    super(`media_unavailable: ${code}`);
+    this.name = "MediaUnavailableError";
+  }
 }
 
 /**
@@ -24,9 +46,27 @@ export interface OutboundAttempt {
 export function createOutboundProcessor(deps: {
   store: OutboundStore;
   sender: Sender;
+  fetchMedia: MediaFetcher;
   logger: Logger;
 }) {
-  const { store, sender, logger } = deps;
+  const { store, sender, fetchMedia, logger } = deps;
+
+  const send = async (connectionId: string, to: string, content: OutboundContent, providerId: string) => {
+    if (content.type === "text") {
+      await sender.sendText(connectionId, to, content.text, providerId);
+      return;
+    }
+    const fetched = await fetchMedia(content.url);
+    if (!fetched.ok) throw new MediaUnavailableError(fetched.error);
+    await sender.sendMedia(connectionId, to, {
+      type: content.type,
+      bytes: fetched.bytes,
+      mimetype: (content.type === "document" ? content.mimetype : null) ?? fetched.contentType,
+      caption: content.type === "audio" ? null : content.caption ?? null,
+      fileName: content.type === "document" ? content.fileName ?? null : null,
+      voice: content.type === "audio" && content.voice === true,
+    }, providerId);
+  };
 
   return async function processOutbound({ messageId, attempt, maxAttempts }: OutboundAttempt) {
     const message = await store.load(messageId);
@@ -44,9 +84,11 @@ export function createOutboundProcessor(deps: {
 
     await store.markSending(messageId, providerId);
     try {
-      await sender.sendText(message.connectionId, message.to, message.text, providerId);
+      await send(message.connectionId, message.to, message.content, providerId);
     } catch (error) {
-      const code = error instanceof SessionNotReadyError ? "connection_not_ready" : "send_failed";
+      const code = error instanceof SessionNotReadyError ? "connection_not_ready"
+        : error instanceof MediaUnavailableError ? "media_unavailable"
+        : "send_failed";
       logger.warn({ messageId, attempt, code }, "outbound send failed");
       if (last) {
         await store.markFailed(messageId, code, error instanceof Error ? error.message : String(error));

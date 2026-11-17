@@ -43,9 +43,11 @@ Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
 0. **Substituir a D-API no Tendi** (plano em `docs/dapi-compat.md`): camada compatível com a
    D-API em `/compat/dapi/api/v1`. Fase 1 (sessões, QR e `connection.status`) no PR #21, com
    a migration `dapi_compat_sessions` ainda não aplicada. Fase 2 (mensagens de texto, enviadas
-   pelo celular, entregue/lida, envio com id imediato) na branch `feat/dapi-compat-messages`,
-   sem migration nova. Depois: fase 3 (mídia e avatar), fase 4 (painel super admin). Trocar o
-   Tendi de provedor de preferência depois da fase 3.
+   pelo celular, entregue/lida, envio com id imediato) no PR #22, sem migration nova. Fase 3
+   (mídia recebida com `media_url`, envio de mídia, avatar) na branch `feat/dapi-compat-media`,
+   que exige `MEDIA_KEY` nova no `deploy/.env` (`openssl rand -base64 32`) e cria o volume
+   `media_data`. Depois das fases 1 a 3 o Tendi pode trocar de provedor (ver
+   `docs/dapi-compat.md`). Fase 4: painel super admin.
 1. **Limpeza de acesso** (usuário `deploy` já criado e testado em 2026-11-17). Falta:
    - No PC de casa: listar as chaves (`ssh-keygen -lf ~/.ssh/*.pub`) e ver qual das duas chaves
      extras do root é dele: `onconnect-deploy` (`SHA256:n2MOjbgW...`) ou

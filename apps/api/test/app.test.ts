@@ -1,5 +1,9 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createApiKeyAuthenticator,
+  createMediaVault,
   generateApiKey,
   loadApiEnv,
   type CredentialRecord,
@@ -22,6 +26,7 @@ const baseEnv = {
   DATABASE_URL: "postgresql://onconnect_app:unused@localhost:5432/postgres",
   API_KEY_PEPPER: PEPPER,
   WEBHOOK_SECRET_KEY: Buffer.alloc(32, 7).toString("base64"),
+  MEDIA_KEY: Buffer.alloc(32, 8).toString("base64"),
 };
 
 // In-memory credential table: key A is valid, key B belongs to another
@@ -100,6 +105,36 @@ describe("health", () => {
     const response = await instance.inject({ method: "GET", url: "/health/ready" });
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({ status: "unavailable", checks: { redis: "fail" } });
+  });
+});
+
+describe("received media links", () => {
+  it("serves a stored file by its signed link, without an API key or the database", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "onconnect-api-media-"));
+    try {
+      const vault = createMediaVault({ key: baseEnv.MEDIA_KEY, dir, publicBaseUrl: "http://localhost:8080" });
+      const url = await vault.save(Buffer.from("png-bytes"), { mimetype: "image/png" });
+      const document = await vault.save(Buffer.from("<html>"), { mimetype: "text/html" });
+      const instance = await start({ MEDIA_DIR: dir });
+      const before = dbConnects;
+
+      const image = await instance.inject({ method: "GET", url: url.replace("http://localhost:8080", "") });
+      expect(image.statusCode).toBe(200);
+      expect(image.headers["content-type"]).toBe("image/png");
+      expect(image.headers["content-disposition"]).toBe("inline");
+      expect(image.rawPayload.toString()).toBe("png-bytes");
+
+      // Anything a browser could run is a download, never rendered in place.
+      const html = await instance.inject({ method: "GET", url: document.replace("http://localhost:8080", "") });
+      expect(html.headers["content-disposition"]).toBe("attachment");
+
+      const tampered = url.replace("http://localhost:8080", "").replace(/.$/, (c) => (c === "A" ? "B" : "A"));
+      expect((await instance.inject({ method: "GET", url: tampered })).statusCode).toBe(404);
+      expect((await instance.inject({ method: "GET", url: "/media/not-a-token" })).statusCode).toBe(400);
+      expect(dbConnects).toBe(before);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

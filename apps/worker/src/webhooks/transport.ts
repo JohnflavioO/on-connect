@@ -1,6 +1,7 @@
-import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from "node:dns";
 import { request } from "node:https";
-import { checkWebhookUrl, isPublicAddress } from "@on-connect/core";
+import { checkWebhookUrl, publicOnlyLookup } from "@on-connect/core";
+
+export { publicOnlyLookup };
 
 export interface WebhookRequest {
   url: string;
@@ -12,39 +13,6 @@ export interface WebhookRequest {
 export type WebhookResult = { statusCode: number } | { error: string };
 
 export type WebhookSender = (request: WebhookRequest) => Promise<WebhookResult>;
-
-type LookupCallback = (
-  error: NodeJS.ErrnoException | null,
-  address: string | LookupAddress[],
-  family?: number,
-) => void;
-
-/**
- * DNS lookup used for the actual connection: it refuses the request when
- * any resolved address is not public. Checking here, and not before the
- * request, closes the gap where a name resolves to a public address during
- * a check and to a private one when connecting (DNS rebinding).
- */
-export function publicOnlyLookup(
-  hostname: string,
-  options: LookupOptions,
-  callback: LookupCallback,
-): void {
-  dnsLookup(hostname, { ...options, all: true }, (error, addresses) => {
-    if (error) {
-      callback(error, "");
-      return;
-    }
-    const list = addresses;
-    const first = list[0];
-    if (!first || list.some((entry) => !isPublicAddress(entry.address))) {
-      callback(Object.assign(new Error("Destination is not a public address"), { code: "EBLOCKED" }), "");
-      return;
-    }
-    if (options.all) callback(null, list);
-    else callback(null, first.address, first.family);
-  });
-}
 
 /**
  * POSTs over HTTPS with certificate verification, no redirects (a redirect

@@ -236,11 +236,18 @@ describe("webhook dispatcher", () => {
   });
 
   it("describes media with its caption, voice notes as ptt", async () => {
-    const image = await sentBody(received({ content: { type: "image", caption: "foto", mimetype: "image/jpeg" } }));
+    const image = await sentBody(received({
+      content: { type: "image", caption: "foto", mimetype: "image/jpeg" },
+      mediaUrl: "https://onconnect.example.com/media/abc.def",
+    }));
     expect(image.body?.data).toMatchObject({
       type: "image", message: "foto",
-      media_data: { mimetype: "image/jpeg", filename: null, caption: "foto" }, media_url: null,
+      media_data: { mimetype: "image/jpeg", filename: null, caption: "foto" },
+      media_url: "https://onconnect.example.com/media/abc.def",
     });
+    // Too large or not downloadable: the message still goes, without a link.
+    const noFile = await sentBody(received({ content: { type: "document", fileName: "a.pdf" } }));
+    expect(noFile.body?.data).toMatchObject({ type: "document", media_url: null, media_data: { filename: "a.pdf" } });
     const voice = await sentBody(received({ content: { type: "audio", mimetype: "audio/ogg", voice: true } }));
     expect(voice.body?.data).toMatchObject({ type: "ptt", message: null });
   });

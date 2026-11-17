@@ -33,6 +33,16 @@ const postgresUrl = (name: string) =>
  */
 const webhookSecretKey = encryptionKey("WEBHOOK_SECRET_KEY");
 
+/**
+ * Received media (see media.ts). The sessions process writes files, the API
+ * serves them; both need the key and the same directory (a shared volume).
+ * Losing the key makes every stored file unreadable and every media link dead.
+ */
+const mediaSettings = {
+  MEDIA_KEY: encryptionKey("MEDIA_KEY"),
+  MEDIA_DIR: z.string().min(1).default("/data/media"),
+};
+
 const apiSchema = baseSchema.extend({
   API_HOST: z.string().min(1).default("0.0.0.0"),
   API_PORT: z.coerce.number().int().min(1).max(65535).default(8080),
@@ -44,6 +54,7 @@ const apiSchema = baseSchema.extend({
   /** Server-side HMAC key for API-key verifiers. Rotating it invalidates every key. */
   API_KEY_PEPPER: z.string().min(32, "API_KEY_PEPPER must have at least 32 characters"),
   WEBHOOK_SECRET_KEY: webhookSecretKey,
+  ...mediaSettings,
 });
 
 const workerSchema = baseSchema.extend({
@@ -63,6 +74,13 @@ const sessionsSchema = baseSchema.extend({
   SESSION_STATE_KEY: encryptionKey("SESSION_STATE_KEY"),
   /** Upper bound on simultaneously open WhatsApp sockets in this process. */
   SESSIONS_MAX: z.coerce.number().int().min(1).max(2_000).default(200),
+  ...mediaSettings,
+  /** Base of the media links handed to integrators (the API's public URL). */
+  PUBLIC_API_BASE_URL: z.url(),
+  /** Larger media is not downloaded (the message still arrives, without a link). */
+  MEDIA_MAX_BYTES: z.coerce.number().int().min(1_048_576).max(104_857_600).default(33_554_432),
+  /** Stored media older than this is deleted (whole months at a time). */
+  MEDIA_RETENTION_DAYS: z.coerce.number().int().min(7).max(3_650).default(90),
 });
 
 export type BaseEnv = z.infer<typeof baseSchema>;

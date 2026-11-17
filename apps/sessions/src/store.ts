@@ -1,4 +1,4 @@
-import type { ConnectionStatus, DatabasePool } from "@on-connect/core";
+import type { ConnectionStatus, DatabasePool, OutboundContent } from "@on-connect/core";
 import type { InboundMessage, StatusUpdate } from "./message-mapping.js";
 
 export interface ConnectedAccount {
@@ -33,7 +33,7 @@ export interface OutboundMessage {
   connectionId: string;
   status: string;
   to: string;
-  text: string;
+  content: OutboundContent;
   providerMessageId: string | null;
 }
 
@@ -127,6 +127,7 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore {
         pushName: message.pushName,
         counterpartIsPhone: message.counterpartIsPhone,
         fromMe: message.fromMe,
+        mediaUrl: message.mediaUrl ?? null,
       };
       // Message and event in one statement: an event is never produced for a
       // duplicate (same connection + WhatsApp id), and never lost for a new one.
@@ -162,7 +163,8 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore {
                                    'providerMessageId', $4::text, 'fromMe', $8::boolean,
                                    'jid', $5::jsonb ->> 'jid',
                                    'counterpartIsPhone', ($5::jsonb ->> 'counterpartIsPhone')::boolean,
-                                   'timestamp', $6::timestamptz),
+                                   'timestamp', $6::timestamptz,
+                                   'mediaUrl', $5::jsonb ->> 'mediaUrl'),
                 $6
            FROM m CROSS JOIN c
          RETURNING id`,
@@ -229,9 +231,9 @@ export function createPostgresOutboundStore(pool: DatabasePool): OutboundStore {
     async load(messageId) {
       const result = await run<{
         id: string; connection_id: string; status: string; counterpart: string;
-        text: string | null; provider_message_id: string | null;
+        content: OutboundContent | null; provider_message_id: string | null;
       }>(
-        `SELECT id, connection_id, status, counterpart, payload -> 'content' ->> 'text' AS text,
+        `SELECT id, connection_id, status, counterpart, payload -> 'content' AS content,
                 provider_message_id
            FROM onconnect.messages WHERE id = $1 AND direction = 'outbound'`,
         [messageId],
@@ -243,7 +245,7 @@ export function createPostgresOutboundStore(pool: DatabasePool): OutboundStore {
         connectionId: row.connection_id,
         status: row.status,
         to: row.counterpart,
-        text: row.text ?? "",
+        content: row.content ?? { type: "text", text: "" },
         providerMessageId: row.provider_message_id,
       };
     },

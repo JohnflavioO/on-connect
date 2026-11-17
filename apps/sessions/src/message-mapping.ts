@@ -27,6 +27,10 @@ export interface InboundMessage {
    * the API are deduplicated by their WhatsApp id when stored.
    */
   fromMe: boolean;
+  /** Fetches the file of a media message (set by the socket adapter). */
+  downloadMedia?: () => Promise<Buffer | null>;
+  /** Link to the stored file, once downloaded and saved. */
+  mediaUrl?: string | null;
 }
 
 export interface StatusUpdate {

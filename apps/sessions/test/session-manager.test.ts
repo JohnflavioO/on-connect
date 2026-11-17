@@ -54,7 +54,10 @@ class FakeStore implements SessionStore {
   }
 }
 
-function setup(options: { maxSessions?: number } = {}) {
+function setup(options: {
+  maxSessions?: number;
+  media?: { save(bytes: Buffer, meta: { mimetype: string | null }): Promise<string> };
+} = {}) {
   const store = new FakeStore();
   const redis = new FakeRedis();
   // Plain mock properties (not WaSocket methods), so assertions can reference them.
@@ -64,6 +67,8 @@ function setup(options: { maxSessions?: number } = {}) {
     requestPairingCode: ReturnType<typeof vi.fn<(phone: string) => Promise<string>>>;
     newMessageId: ReturnType<typeof vi.fn<() => string>>;
     sendText: ReturnType<typeof vi.fn<(to: string, text: string, id: string) => Promise<string>>>;
+    sendMedia: ReturnType<typeof vi.fn<(to: string, media: unknown, id: string) => Promise<string>>>;
+    profilePictureUrl: ReturnType<typeof vi.fn<() => Promise<string | null>>>;
   } }> = [];
   const scheduled: Array<{ fn: () => void; ms: number }> = [];
   const manager = new SessionManager({
@@ -77,12 +82,15 @@ function setup(options: { maxSessions?: number } = {}) {
         requestPairingCode: vi.fn(async () => "ABCD-1234"),
         newMessageId: vi.fn(() => "3EB0TESTID"),
         sendText: vi.fn(async (_to: string, _text: string, id: string) => id),
+        sendMedia: vi.fn(async (_to: string, _media: unknown, id: string) => id),
+        profilePictureUrl: vi.fn(async () => null),
       };
       sockets.push({ id, handlers, socket });
       return socket;
     },
     logger: pino({ level: "silent" }),
     maxSessions: options.maxSessions ?? 10,
+    ...(options.media ? { media: options.media } : {}),
     schedule: (fn, ms) => scheduled.push({ fn, ms }),
     qrWaitMs: 1_000,
   });
@@ -276,6 +284,38 @@ describe("SessionManager messages", () => {
     await flush();
     expect(t.store.inbound).toEqual([["c1", inbound]]);
     expect(t.store.statusUpdates).toEqual([["c1", { providerId: "OUT1", status: "delivered" }]]);
+  });
+
+  it("stores a media message's file and records the message with its link", async () => {
+    const saved: Array<{ bytes: Buffer; mimetype: string | null }> = [];
+    const t = setup({
+      media: { save: async (bytes, meta) => { saved.push({ bytes, mimetype: meta.mimetype }); return "https://x/media/t.s"; } },
+    });
+    t.add("c1");
+    await t.manager.start("c1");
+    const photo = {
+      ...inbound, content: { type: "image", mimetype: "image/jpeg" },
+      downloadMedia: async () => Buffer.from("jpeg"),
+    };
+    t.last().handlers.onMessages([photo]);
+    await flush();
+    await flush();
+    expect(saved).toEqual([{ bytes: Buffer.from("jpeg"), mimetype: "image/jpeg" }]);
+    expect(t.store.inbound[0]?.[1].mediaUrl).toBe("https://x/media/t.s");
+  });
+
+  it("still records a media message whose file could not be downloaded", async () => {
+    const t = setup({ media: { save: async () => "never" } });
+    t.add("c1");
+    await t.manager.start("c1");
+    t.last().handlers.onMessages([{
+      ...inbound, content: { type: "video" },
+      downloadMedia: async () => { throw new Error("expired on WhatsApp"); },
+    }]);
+    await flush();
+    await flush();
+    expect(t.store.inbound).toHaveLength(1);
+    expect(t.store.inbound[0]?.[1].mediaUrl).toBeUndefined();
   });
 
   it("keeps recording after one event fails", async () => {

@@ -92,6 +92,7 @@ describe.skipIf(!enabled)("webhook endpoints (PostgreSQL 17)", () => {
         DATABASE_URL: "postgresql://unused@localhost/postgres",
         API_KEY_PEPPER: PEPPER,
         WEBHOOK_SECRET_KEY: WEBHOOK_KEY,
+        MEDIA_KEY: Buffer.alloc(32, 8).toString("base64"),
       }),
       checkRedis: async () => true,
       authenticator: createApiKeyAuthenticator({ store: createPostgresCredentialStore(db), pepper: PEPPER }),

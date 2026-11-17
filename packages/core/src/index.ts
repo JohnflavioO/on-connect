@@ -12,6 +12,7 @@ export {
   REDACTED_LOG_PATHS,
   createLogger,
   loggerOptions,
+  redactUrl,
   type Logger,
   type LoggerConfig,
 } from "./logger.js";
@@ -117,9 +118,11 @@ export {
 
 export {
   MessageRejectedError,
+  createOutboundMessage,
   createOutboundText,
   findMessage,
   generateWhatsappMessageId,
+  type OutboundContent,
   listMessages,
   toMessage,
   type Message,
@@ -128,6 +131,14 @@ export {
   type MessageStatus,
 } from "./messages.js";
 export { OUTBOUND_ATTEMPTS, createOutboundQueue, enqueueOutbound } from "./sessions.js";
+export {
+  MEDIA_CONTENT_TYPES,
+  createMediaVault,
+  type MediaVault,
+  type MediaVaultOptions,
+  type StoredMedia,
+} from "./media.js";
+export { fetchPublicBytes, publicOnlyLookup, type FetchedBytes } from "./safe-http.js";
 export {
   CompatSessionError,
   DAPI_COMPAT_EVENTS,

@@ -32,6 +32,9 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 FROM node:24-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
+# Mount point of the media volume. A new named volume copies this directory's
+# ownership, so the unprivileged user can write to it.
+RUN mkdir -p /data/media && chown node:node /data/media && chmod 700 /data/media
 # Never run as root inside the container.
 USER node
 
