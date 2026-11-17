@@ -140,6 +140,32 @@ Do not apply migrations to Supabase, merge, or deploy as part of this plan.
   not downloaded. With LID addressing the phone comes from `remoteJidAlt`; when
   WhatsApp withholds it, the opaque id is stored and flagged.
 - Status only moves forward (sent → delivered → read). Every inbound message and
-  status change writes a `webhook_events` row in the same statement; delivery of
-  those events to integrators is the next step.
+  status change writes a `webhook_events` row in the same statement.
 - Message content is never written to logs.
+
+## Webhooks
+
+- `/v1/webhook-endpoints` (create, list, read, patch, delete, `rotate-secret`) is
+  client-scoped like every other route; another client's endpoint answers 404.
+  At most 10 endpoints per client.
+- The signing secret (`whsec_...`) is returned only on creation and rotation. It is
+  stored AES-256-GCM sealed with `WEBHOOK_SECRET_KEY`, bound to the endpoint id,
+  in the existing `secret_*` columns. The audit log records the URL host only,
+  since a path or query may carry the integrator's own token.
+- Fan-out is a trigger on `webhook_events`: the deliveries are inserted in the
+  same transaction as the event, under the inserting role's RLS, so an event
+  only reaches endpoints of its own client (optionally filtered by tenant and
+  event type). Paused endpoints accumulate deliveries; disabled ones get none.
+- The worker (as `onconnect_system`) claims due deliveries with
+  `FOR UPDATE SKIP LOCKED` and a 60 s lease (the attempt counter), signs
+  `"<t>.<body>"` with HMAC-SHA256 (`OnConnect-Signature: t=..,v1=..`) and POSTs it.
+  Only 2xx counts; redirects are failures. 12 attempts over about 28 hours, then
+  `dead`. An endpoint failing for 24 h on at least 10 attempts is `disabled`;
+  `PATCH status=active` re-enables it and retries waiting deliveries at once.
+- SSRF: URLs must be `https`, without credentials, and not name a private or
+  single-label host. The worker resolves the host itself at connect time and
+  refuses the request if any address is private (loopback, RFC 1918, link-local,
+  CGNAT, ULA, mapped), so DNS rebinding cannot reach Redis or other containers.
+  One connection per delivery, no redirects, 10 s deadline, response body unread.
+- Delivery logs carry ids, attempt, status code and error code only — never the
+  body or the URL.

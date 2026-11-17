@@ -3,6 +3,7 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import sensible from "@fastify/sensible";
 import {
+  createSecretBox,
   loggerOptions,
   type ApiEnv,
   type ApiKeyAuthenticator,
@@ -109,6 +110,7 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
     authenticator: deps.authenticator,
     db: deps.db,
     sessions: deps.sessions,
+    webhookSecrets: createSecretBox(env.WEBHOOK_SECRET_KEY),
   });
 
   return app;

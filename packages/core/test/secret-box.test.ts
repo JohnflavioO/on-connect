@@ -32,6 +32,16 @@ describe("createSecretBox", () => {
     expect(() => box.open("v1.only.three", "ctx")).toThrow(/Malformed/);
   });
 
+  it("seals into binary parts bound to their context", () => {
+    const box = createSecretBox(key);
+    const parts = box.sealParts("whsec_abc", "webhook-endpoint:1");
+    expect(parts.nonce).toHaveLength(12);
+    expect(parts.tag).toHaveLength(16);
+    expect(parts.ciphertext.toString("utf8")).not.toContain("whsec");
+    expect(box.openParts(parts, "webhook-endpoint:1")).toBe("whsec_abc");
+    expect(() => box.openParts(parts, "webhook-endpoint:2")).toThrow();
+  });
+
   it("requires a 32-byte key", () => {
     expect(() => createSecretBox(randomBytes(16).toString("base64"))).toThrow(/32 bytes/);
   });

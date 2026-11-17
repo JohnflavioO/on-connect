@@ -8,9 +8,9 @@ API oficial entra depois, atrás da mesma API.
 > **Estado atual:** autenticação por API key (`GET /v1/me`), tenants
 > (`/v1/tenants`) e conexões WhatsApp Web (`/v1/tenants/:id/connections`,
 > `/v1/connections/:id/qr`, `/pairing-code`, `/restart`) e mensagens de texto
-> (`POST/GET /v1/connections/:id/messages`, `GET /v1/messages/:id`), com
-> recebimento e status de entrega gravados como eventos. A entrega desses
-> eventos por webhook ao integrador ainda **não** está implementada.
+> (`POST/GET /v1/connections/:id/messages`, `GET /v1/messages/:id`). Mensagens
+> recebidas e mudanças de status chegam ao integrador por webhook assinado
+> (`/v1/webhook-endpoints`; ver [docs/webhooks.md](docs/webhooks.md)).
 >
 > **Risco do provedor não oficial:** viola os termos de uso do WhatsApp; o
 > número pode ser banido e o protocolo pode mudar sem aviso.
@@ -21,7 +21,7 @@ API oficial entra depois, atrás da mesma API.
 apps/
   api/       Fastify. Recebe chamadas dos integradores.
   sessions/  Baileys. Mantém os sockets do WhatsApp Web (uma réplica só).
-  worker/    BullMQ. Processa filas (envio, eventos, entregas de webhook).
+  worker/    BullMQ e entrega de webhooks (lê entregas pendentes do banco).
 packages/
   core/      Ambiente, logger com redação, Redis, filas, banco, auth, repositórios.
 deploy/      Stack de produção: Caddy + api + sessions + worker + Redis.

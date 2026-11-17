@@ -58,6 +58,7 @@ services:
       REDIS_URL: redis://redis:6379
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in deploy/.env}
       API_KEY_PEPPER: ${API_KEY_PEPPER:?set API_KEY_PEPPER in deploy/.env}
+      WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY:?set WEBHOOK_SECRET_KEY in deploy/.env}
     volumes:
       # Supabase signs its database certificates with its own root CA, which
       # Node does not trust by default. DATABASE_URL points sslrootcert here
@@ -76,8 +77,15 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-10}
       REDIS_URL: redis://redis:6379
+      # The worker delivers webhooks of every client, as onconnect_system.
+      SYSTEM_DATABASE_URL: ${SYSTEM_DATABASE_URL:?set SYSTEM_DATABASE_URL in deploy/.env}
+      WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY:?set WEBHOOK_SECRET_KEY in deploy/.env}
+    volumes:
+      - ./supabase-ca.crt:/run/certs/supabase-ca.crt:ro
     # `edge` gives the worker outbound internet access (Meta Graph API,
-    # customer webhooks). It accepts no inbound connections.
+    # customer webhooks). It accepts no inbound connections. Webhook URLs
+    # that resolve to private addresses are refused, so a client cannot use
+    # the worker to reach Redis or other containers.
     networks: [edge, data]
     stop_grace_period: 35s
 

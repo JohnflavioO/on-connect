@@ -78,7 +78,32 @@ export {
   type Connection,
   type ConnectionStatus,
 } from "./connections.js";
-export { createSecretBox, type SecretBox } from "./secret-box.js";
+export { createSecretBox, type SealedParts, type SecretBox } from "./secret-box.js";
+export {
+  MAX_WEBHOOK_ENDPOINTS,
+  WEBHOOK_EVENT_TYPES,
+  WEBHOOK_SECRET_KEY_VERSION,
+  WEBHOOK_SIGNATURE_HEADER,
+  WebhookEndpointError,
+  checkWebhookUrl,
+  createWebhookEndpoint,
+  deleteWebhookEndpoint,
+  findWebhookEndpoint,
+  generateWebhookSecret,
+  isPublicAddress,
+  listWebhookEndpoints,
+  rotateWebhookSecret,
+  signWebhook,
+  updateWebhookEndpoint,
+  verifyWebhookSignature,
+  webhookSecretContext,
+  type WebhookEndpoint,
+  type WebhookEndpointInput,
+  type WebhookEndpointPatch,
+  type WebhookEndpointStatus,
+  type WebhookEventType,
+  type WebhookUrlProblem,
+} from "./webhooks.js";
 export {
   PAIRING_CODE_TTL_SECONDS,
   QR_TTL_SECONDS,

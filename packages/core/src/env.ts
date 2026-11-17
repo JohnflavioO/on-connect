@@ -18,6 +18,21 @@ const baseSchema = z.object({
     .regex(/^rediss?:\/\//, "REDIS_URL must start with redis:// or rediss://"),
 });
 
+const encryptionKey = (name: string) =>
+  z.string().refine((value) => Buffer.from(value, "base64").length === 32, {
+    message: `${name} must be 32 bytes in base64 (openssl rand -base64 32)`,
+  });
+
+const postgresUrl = (name: string) =>
+  z.string().regex(/^postgres(ql)?:\/\//, `${name} must start with postgres:// or postgresql://`);
+
+/**
+ * 32 random bytes, base64. Encrypts webhook signing secrets in the database.
+ * The API seals them, the worker opens them to sign deliveries. Losing it
+ * forces every endpoint secret to be rotated.
+ */
+const webhookSecretKey = encryptionKey("WEBHOOK_SECRET_KEY");
+
 const apiSchema = baseSchema.extend({
   API_HOST: z.string().min(1).default("0.0.0.0"),
   API_PORT: z.coerce.number().int().min(1).max(65535).default(8080),
@@ -25,15 +40,17 @@ const apiSchema = baseSchema.extend({
   /** Requests allowed per client IP per minute before a 429 is returned. */
   RATE_LIMIT_MAX_PER_MINUTE: z.coerce.number().int().positive().default(300),
   /** Connection string for the onconnect_app role (never postgres/service_role). */
-  DATABASE_URL: z
-    .string()
-    .regex(/^postgres(ql)?:\/\//, "DATABASE_URL must start with postgres:// or postgresql://"),
+  DATABASE_URL: postgresUrl("DATABASE_URL"),
   /** Server-side HMAC key for API-key verifiers. Rotating it invalidates every key. */
   API_KEY_PEPPER: z.string().min(32, "API_KEY_PEPPER must have at least 32 characters"),
+  WEBHOOK_SECRET_KEY: webhookSecretKey,
 });
 
 const workerSchema = baseSchema.extend({
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(10),
+  /** onconnect_system: the worker delivers webhooks of every client. */
+  SYSTEM_DATABASE_URL: postgresUrl("SYSTEM_DATABASE_URL"),
+  WEBHOOK_SECRET_KEY: webhookSecretKey,
 });
 
 const sessionsSchema = baseSchema.extend({
@@ -41,15 +58,9 @@ const sessionsSchema = baseSchema.extend({
    * Connection string for onconnect_system: the sessions process updates
    * connections of every client, so it cannot run under client-scoped RLS.
    */
-  SYSTEM_DATABASE_URL: z
-    .string()
-    .regex(/^postgres(ql)?:\/\//, "SYSTEM_DATABASE_URL must start with postgres:// or postgresql://"),
+  SYSTEM_DATABASE_URL: postgresUrl("SYSTEM_DATABASE_URL"),
   /** 32 random bytes, base64. Encrypts WhatsApp Web session keys stored in Redis. */
-  SESSION_STATE_KEY: z
-    .string()
-    .refine((value) => Buffer.from(value, "base64").length === 32, {
-      message: "SESSION_STATE_KEY must be 32 bytes in base64 (openssl rand -base64 32)",
-    }),
+  SESSION_STATE_KEY: encryptionKey("SESSION_STATE_KEY"),
   /** Upper bound on simultaneously open WhatsApp sockets in this process. */
   SESSIONS_MAX: z.coerce.number().int().min(1).max(2_000).default(200),
 });
