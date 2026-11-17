@@ -2,6 +2,26 @@
 
 Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
 
+## Validação de envio e correção do destinatário (2026-11-17)
+
+- A correção do formulário foi integrada no PR #25 (`dc861a3`) e implantada
+  pelo usuário; a geração da chave `teste-pos-deploy` pelo painel funcionou.
+- API key validada com HTTP 200. Um envio para um número brasileiro de 13
+  dígitos ficou em `sent` sem chegar. Mensagens recebidas desse celular
+  identificavam o número com 12 dígitos; um novo envio para esse identificador
+  chegou, conforme confirmação do usuário. Não presumir que todos os números
+  brasileiros precisam perder o nono dígito.
+- Correção em preparação na branch `fix/whatsapp-recipient-jid`: consultar
+  `onWhatsApp` antes de enviar texto ou mídia e usar o JID retornado; não enviar
+  para um JID adivinhado quando a consulta falhar ou o destinatário não existir.
+  Mantém o id da mensagem para novas tentativas. Não reenvia mensagens que já
+  estão em `sent`. Build, typecheck, lint e 247 testes passaram (11 testes novos
+  do adaptador; 74 testes de integração não executados). Commit/PR e deploy
+  dessa correção ainda pendentes; a consulta automática precisa ser validada
+  com WhatsApp real após o deploy.
+- Próximos passos: validar novamente o número original após essa correção,
+  testar mídia e cadastrar/validar webhooks antes de integrar o Tendi.
+
 ## Atualização após o deploy do painel (2026-11-17)
 
 - O usuário confirmou o deploy de `3f89aee` (PR #24) na VPS: api/admin/Redis

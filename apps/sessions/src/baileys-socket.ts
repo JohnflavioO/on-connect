@@ -123,6 +123,16 @@ export function createBaileysSocketFactory(
       if (statuses.length > 0) handlers.onStatus(statuses);
     });
 
+    const recipientJid = async (phoneNumber: string): Promise<string> => {
+      // WhatsApp may register a different phone JID (e.g. Brazil's ninth
+      // digit). Use its answer instead of guessing or rewriting the number.
+      const contacts = await socket.onWhatsApp(phoneNumber);
+      if (!contacts) throw new Error("recipient_lookup_unavailable");
+      const recipient = contacts.find((contact) => contact.exists && contact.jid);
+      if (!recipient) throw new Error("recipient_not_on_whatsapp");
+      return recipient.jid;
+    };
+
     return {
       logout: () => socket.logout(),
       end: () => {
@@ -131,10 +141,12 @@ export function createBaileysSocketFactory(
       requestPairingCode: (phoneNumber) => socket.requestPairingCode(phoneNumber),
       newMessageId: () => generateMessageIDV2(socket.user?.id),
       async sendText(phoneNumber, text, messageId) {
-        const sent = await socket.sendMessage(`${phoneNumber}@s.whatsapp.net`, { text }, { messageId });
+        const jid = await recipientJid(phoneNumber);
+        const sent = await socket.sendMessage(jid, { text }, { messageId });
         return sent?.key.id ?? messageId;
       },
       async sendMedia(phoneNumber, media, messageId) {
+        const jid = await recipientJid(phoneNumber);
         const caption = media.caption ? { caption: media.caption } : {};
         const mimetype = media.mimetype ? { mimetype: media.mimetype } : {};
         let content: AnyMessageContent;
@@ -155,7 +167,7 @@ export function createBaileysSocketFactory(
             ...caption,
           };
         }
-        const sent = await socket.sendMessage(`${phoneNumber}@s.whatsapp.net`, content, { messageId });
+        const sent = await socket.sendMessage(jid, content, { messageId });
         return sent?.key.id ?? messageId;
       },
       async profilePictureUrl(phoneNumber) {
