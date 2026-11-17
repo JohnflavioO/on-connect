@@ -1,9 +1,11 @@
-import type { ApiKeyAuthenticator } from "@on-connect/core";
+import type { ApiKeyAuthenticator, DatabasePool } from "@on-connect/core";
 import type { FastifyPluginAsync } from "fastify";
 import { principalOf, requireApiKey } from "../plugins/api-key-auth.js";
+import { tenantRoutes } from "./tenants.js";
 
 export interface V1RouteOptions {
   authenticator: ApiKeyAuthenticator;
+  db: DatabasePool;
 }
 
 /** Integrator API. Every route in this scope requires a valid API key. */
@@ -19,4 +21,6 @@ export const v1Routes: FastifyPluginAsync<V1RouteOptions> = async (app, options)
       scopes: principal.scopes,
     };
   });
+
+  await app.register(tenantRoutes, { prefix: "/tenants", db: options.db });
 };

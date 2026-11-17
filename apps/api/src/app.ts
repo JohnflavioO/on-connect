@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import sensible from "@fastify/sensible";
-import { loggerOptions, type ApiEnv, type ApiKeyAuthenticator } from "@on-connect/core";
+import {
+  loggerOptions,
+  type ApiEnv,
+  type ApiKeyAuthenticator,
+  type DatabasePool,
+} from "@on-connect/core";
 import Fastify, { type FastifyInstance } from "fastify";
 import { healthRoutes } from "./routes/health.js";
 import { v1Routes } from "./routes/v1.js";
@@ -14,6 +19,8 @@ export interface AppDependencies {
   checkRedis: () => Promise<boolean>;
   /** Verifies integrator API keys. */
   authenticator: ApiKeyAuthenticator;
+  /** onconnect_app pool; every query goes through withClientTransaction. */
+  db: DatabasePool;
 }
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
@@ -28,6 +35,16 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
     // connecting from anywhere else cannot spoof its IP for rate limiting.
     trustProxy: ["loopback", "uniquelocal"],
     bodyLimit: 1_048_576,
+    // Longer than any valid path parameter (external ids are capped at 200),
+    // so an over-long id reaches schema validation and gets a 400, not a 404.
+    routerOptions: { maxParamLength: 256 },
+    ajv: {
+      customOptions: {
+        // Fastify's default silently drops unknown fields. Reject them, so a
+        // caller sending e.g. a client id learns it is not accepted.
+        removeAdditional: false,
+      },
+    },
     // Accept a caller-supplied request id only when it is well formed;
     // otherwise generate one, so log lines cannot be polluted by a header.
     genReqId: (request) => {
@@ -84,7 +101,11 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
   });
 
   await app.register(healthRoutes, { prefix: "/health", checkRedis: deps.checkRedis });
-  await app.register(v1Routes, { prefix: "/v1", authenticator: deps.authenticator });
+  await app.register(v1Routes, {
+    prefix: "/v1",
+    authenticator: deps.authenticator,
+    db: deps.db,
+  });
 
   return app;
 }

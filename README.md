@@ -4,9 +4,9 @@ Plataforma independente de conectividade WhatsApp (Meta Cloud API oficial),
 multi-tenant, consumida por API. O Tendi é o primeiro cliente integrador.
 
 > **Estado atual:** fundação do monorepo. API com health checks e autenticação
-> por API key (`GET /v1/me`), worker com
+> por API key (`GET /v1/me`), gestão de tenants (`/v1/tenants`), worker com
 > fila de verificação, CI e stack de deploy. Schema multi-tenant com RLS no
-> banco. Tenants, conexões, mensagens e webhooks ainda **não** estão implementados.
+> banco. Conexões, mensagens e webhooks ainda **não** estão implementados.
 
 ## Estrutura
 

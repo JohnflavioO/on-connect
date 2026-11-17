@@ -77,6 +77,24 @@ under that role. Never claim otherwise.
 - Remaining threat: arbitrary SQL as `onconnect_app` can call the lookup for a
   known prefix and read its verifier. Without the pepper it is not usable.
 
+## Tenant access (step 3)
+
+- Routes under `/v1/tenants` (all behind the API key):
+  `GET /` (paginated by `after`, `limit` ≤ 100), `GET /:externalId`,
+  `PUT /:externalId` (create or replace; 201 on create),
+  `PUT /:externalId/commercial-status`.
+- Tenants are addressed only by the integrator's `external_id`. The client
+  comes from the transaction context: every statement in
+  `packages/core/src/tenants.ts` uses `onconnect.current_client_id()` and none
+  takes a client id parameter. RLS is the second line, not the only one.
+- Another client's tenant and a missing tenant both return the same 404.
+- Request schemas reject unknown fields (`removeAdditional: false`), so a
+  forged `clientId` in a body is a 400, never silently dropped.
+- Every write adds an `audit_log` entry with `actor_type = 'client'` and the
+  credential id; an unchanged commercial status writes nothing.
+- Credential `scopes` are not enforced yet: any active key of a client can
+  read and write that client's tenants.
+
 ## Delivery sequence
 
 1. Introduce a database adapter and a transaction helper with integration tests.

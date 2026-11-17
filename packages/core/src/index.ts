@@ -52,3 +52,16 @@ export {
   type ParsedApiKey,
 } from "./api-keys.js";
 export { createPostgresCredentialStore } from "./credential-store.js";
+
+export {
+  COMMERCIAL_STATUSES,
+  findTenant,
+  listTenants,
+  setCommercialStatus,
+  upsertTenant,
+  type AuditActor,
+  type CommercialStatus,
+  type Tenant,
+  type TenantInput,
+  type TenantPage,
+} from "./tenants.js";

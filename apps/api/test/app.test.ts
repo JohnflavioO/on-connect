@@ -3,6 +3,7 @@ import {
   generateApiKey,
   loadApiEnv,
   type CredentialRecord,
+  type DatabasePool,
 } from "@on-connect/core";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
@@ -44,6 +45,16 @@ const authenticator = createApiKeyAuthenticator({
   store: { findByPrefix: async (prefix) => credentials.get(prefix) ?? null },
 });
 
+// Database stand-in for unit tests: any route that reaches it fails loudly,
+// and the counter proves that rejected requests never touch the database.
+let dbConnects = 0;
+const unusedDb: DatabasePool = {
+  connect: async () => {
+    dbConnects += 1;
+    throw new Error("unit tests must not reach the database");
+  },
+};
+
 let app: FastifyInstance | undefined;
 
 async function start(
@@ -54,6 +65,7 @@ async function start(
     env: loadApiEnv({ ...baseEnv, ...overrides }),
     checkRedis,
     authenticator,
+    db: unusedDb,
   });
   return app;
 }
@@ -221,6 +233,7 @@ describe("API key authentication", () => {
     app = await buildApp({
       env: loadApiEnv(baseEnv),
       checkRedis: async () => true,
+      db: unusedDb,
       authenticator: createApiKeyAuthenticator({
         pepper: PEPPER,
         store: {
@@ -233,5 +246,43 @@ describe("API key authentication", () => {
     const response = await me(app, { authorization: `Bearer ${keyA.key}` });
     expect(response.statusCode).toBe(500);
     expect(response.body).not.toContain("onconnect_app");
+  });
+});
+
+describe("tenant routes: rejected before the database", () => {
+  const auth = { authorization: `Bearer ${keyA.key}` };
+
+  it("requires an API key", async () => {
+    const instance = await start();
+    const before = dbConnects;
+    const response = await instance.inject({ method: "GET", url: "/v1/tenants/org-1" });
+    expect(response.statusCode).toBe(401);
+    expect(dbConnects).toBe(before);
+  });
+
+  it.each([
+    ["external id with a slash", "PUT", "/v1/tenants/a%2Fb", { name: "x" }],
+    ["external id with spaces", "GET", "/v1/tenants/a%20b", undefined],
+    ["external id over 200 characters", "GET", `/v1/tenants/${"a".repeat(201)}`, undefined],
+    ["missing name", "PUT", "/v1/tenants/org-1", {}],
+    ["empty name", "PUT", "/v1/tenants/org-1", { name: "" }],
+    ["client id in the body", "PUT", "/v1/tenants/org-1", { name: "x", clientId: CLIENT_B }],
+    ["negative connection limit", "PUT", "/v1/tenants/org-1", { name: "x", maxConnections: -1 }],
+    ["non-object entitlements", "PUT", "/v1/tenants/org-1", { name: "x", entitlements: [] }],
+    ["unknown commercial status", "PUT", "/v1/tenants/org-1/commercial-status", { status: "deleted" }],
+    ["page size above 100", "GET", "/v1/tenants?limit=101", undefined],
+    ["unknown query parameter", "GET", "/v1/tenants?client_id=x", undefined],
+  ] as const)("rejects %s with 400", async (_label, method, url, payload) => {
+    const instance = await start();
+    const before = dbConnects;
+    const response = await instance.inject({
+      method,
+      url,
+      headers: auth,
+      ...(payload === undefined ? {} : { payload }),
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toBe("bad_request");
+    expect(dbConnects).toBe(before);
   });
 });
