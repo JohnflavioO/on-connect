@@ -100,8 +100,37 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
     const mine = await queries.connections({ client: "admin-panel" });
     expect(mine.map((c) => c.session_key)).toEqual(["tendi-loja"]);
     expect(await queries.connections({ client: "admin-panel", status: "error" })).toEqual([]);
+    expect((await queries.connections({ client: "admin-panel", search: "TENDI-LOJA" })).map((c) => c.id)).toEqual([CONN]);
+    expect((await queries.connections({ client: "admin-panel", search: "99990000" })).map((c) => c.id)).toEqual([CONN]);
+    expect(await queries.connections({ client: "admin-panel", search: "%" })).toEqual([]);
     const one = await queries.connection(CONN);
     expect(one).toMatchObject({ client_slug: "admin-panel", tenant: "loja", sent7: "2", received7: "1" });
+  });
+
+  it("uses São Paulo calendar boundaries consistently for totals and daily chart data", async () => {
+    const before = await queries.dashboard(7);
+    const inserted = await sql<{ id: string }>(
+      `INSERT INTO onconnect.messages
+         (client_id, tenant_id, connection_id, direction, status, message_type, counterpart, payload, created_at)
+       SELECT $1, $2, $3, 'outbound', 'sent', 'text', '5585999991111', '{}',
+              ((date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') - interval '6 days')
+                AT TIME ZONE 'America/Sao_Paulo') + delta
+         FROM (VALUES (interval '-1 second'), (interval '1 second')) AS boundaries(delta)
+       RETURNING id`,
+      [CLIENT, TENANT, CONN],
+    );
+    try {
+      const after = await queries.dashboard(7);
+      expect(Number(after.totals?.sent7) - Number(before.totals?.sent7)).toBe(1);
+      for (const period of [7, 14, 30] as const) {
+        const data = await queries.dashboard(period);
+        expect(data.days).toHaveLength(period);
+        expect(data.days.reduce((total, d) => total + Number(d.sent), 0)).toBe(Number(data.totals?.sent7));
+        expect(data.days.reduce((total, d) => total + Number(d.received), 0)).toBe(Number(data.totals?.received7));
+      }
+    } finally {
+      await sql("DELETE FROM onconnect.messages WHERE id = ANY($1::uuid[])", [inserted.map((m) => m.id)]);
+    }
   });
 
   it("shows a client with tenants and keys, and refuses a duplicate slug", async () => {

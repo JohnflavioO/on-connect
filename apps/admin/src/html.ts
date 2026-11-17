@@ -44,6 +44,27 @@ export function html(strings: TemplateStringsArray, ...values: Value[]): Html {
 /** Markup that is trusted because it is a constant of this code base. */
 export const raw = (value: string): Html => new Html(value);
 
+const ICON_PATHS = {
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  connection: '<path d="M8 12h8M12 8v8"/><rect x="3" y="3" width="18" height="18" rx="5"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/><circle cx="9" cy="7" r="4"/>',
+  webhook: '<path d="M10 4a4 4 0 1 0-4 7m12-1a4 4 0 1 1-4 7M6 16a4 4 0 1 0 4 4M6 7l6 10m6-3H6m9-8-3 11"/>',
+  arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  inbox: '<path d="M4 4h16l2 10v6H2v-6L4 4Z"/><path d="M2 14h6l2 3h4l2-3h6"/>',
+  activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+  refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/>',
+  shield: '<path d="M12 3 3 7v6c0 5 9 9 9 9s9-4 9-9V7Z"/><path d="m8 12 3 3 5-6"/>',
+  search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
+  alert: '<path d="m12 3 10 18H2L12 3Zm0 6v5m0 3h.01"/>',
+  check: '<path d="m5 12 4 4L19 6"/>',
+} as const;
+
+export type IconName = keyof typeof ICON_PATHS;
+export function icon(name: IconName): Html {
+  return html`<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${raw(ICON_PATHS[name])}</svg>`;
+}
+
 const dateFormat = new Intl.DateTimeFormat("pt-BR", {
   timeZone: "America/Sao_Paulo",
   day: "2-digit",
@@ -111,11 +132,11 @@ export interface PageOptions {
   body: Html;
 }
 
-const NAV: Array<[PageOptions["active"], string, string]> = [
-  ["dashboard", "/admin", "Dashboard"],
-  ["connections", "/admin/connections", "Conexões"],
-  ["clients", "/admin/clients", "Clientes"],
-  ["webhooks", "/admin/webhooks", "Webhooks"],
+const NAV: Array<[PageOptions["active"], string, string, IconName]> = [
+  ["dashboard", "/admin", "Visão geral", "grid"],
+  ["connections", "/admin/connections", "Conexões", "connection"],
+  ["clients", "/admin/clients", "Clientes", "users"],
+  ["webhooks", "/admin/webhooks", "Webhooks", "webhook"],
 ];
 
 export function page(options: PageOptions): string {
@@ -130,16 +151,20 @@ export function page(options: PageOptions): string {
 <script src="/admin/assets/admin.js" defer></script>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Ir para o conteúdo</a>
 <aside class="sidebar">
-  <a class="brand" href="/admin"><span class="logo">OC</span> On Connect</a>
-  <nav>
-    ${NAV.map(([key, href, label]) =>
-      html`<a href="${href}" class="${key === options.active ? "active" : ""}">${label}</a>`)}
+  <a class="brand" href="/admin"><span class="logo">${icon("activity")}</span><span>On Connect<small>CONSOLE</small></span></a>
+  <div class="nav-caption">PLATAFORMA</div>
+  <nav aria-label="Navegação principal">
+    ${NAV.map(([key, href, label, symbol]) =>
+      html`<a href="${href}" class="${key === options.active ? "active" : ""}" ${key === options.active ? html`aria-current="page"` : ""}>${icon(symbol)}<span>${label}</span>${key === options.active ? html`<i class="nav-indicator"></i>` : ""}</a>`)}
   </nav>
-  <div class="who">Super admin${options.user ? html`<br><strong>${options.user}</strong>` : ""}</div>
+  <div class="sidebar-bottom"><div class="protected">${icon("shield")} Acesso protegido</div>
+  <div class="who"><span class="avatar">${(options.user ?? "A").slice(0, 1).toUpperCase()}</span><div><strong>${options.user ?? "Administrador"}</strong><small>Super admin</small></div></div></div>
 </aside>
-<main>
-  <header class="top"><h1>${options.title}</h1></header>
+<main id="main-content">
+  <header class="top"><div class="breadcrumb">Console <span>/</span> ${options.active === "dashboard" ? "Visão geral" : options.title}</div><span class="console-badge">${icon("shield")} Super admin</span></header>
+  <div class="page-heading"><div><p class="eyebrow">ON CONNECT</p><h1>${options.title}</h1></div><span class="updated-at">Atualizado em ${formatDate(new Date())}</span></div>
   ${options.notice ? html`<div class="notice">${options.notice}</div>` : ""}
   ${options.body}
 </main>

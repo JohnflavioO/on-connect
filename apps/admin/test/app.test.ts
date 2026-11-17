@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildAdminApp } from "../src/app.js";
 import { escapeHtml, formatPhone, maskUrl } from "../src/html.js";
+import type { AdminQueries } from "../src/queries.js";
 
 const SECRET = "proxy-secret-proxy-secret-proxy-secret";
 const ORIGIN = "https://onconnect.example.com";
@@ -18,7 +19,7 @@ const connection = {
 
 function fakeQueries() {
   return {
-    dashboard: vi.fn(async () => ({
+    dashboard: vi.fn<AdminQueries["dashboard"]>(async () => ({
       totals: { connected: "1", live: "2", clients: "1", tenants: "3", sent7: "86", received7: "81",
         pending: "0", dead24: "2", disabled: "0" },
       days: [{ day: "2026-11-17", sent: "10", received: "4" }],
@@ -115,6 +116,32 @@ describe("pages", () => {
     expect(response.body).toContain("Conexões ativas");
     expect(response.body).toContain(">86<");
     expect(response.body).toContain("john");
+    expect(response.body).toContain("Conexões recentes");
+    expect(response.body).toContain("/admin/connections/" + CONN);
+    expect(response.body).toContain('data-chart-toggle="sent"');
+    expect(response.body).toContain("Desistidas em 24 h");
+    expect(queries.dashboard).toHaveBeenCalledWith(7);
+  });
+
+  it("applies a supported chart period and rejects unsupported values by using the default", async () => {
+    const instance = await start();
+    const response = await instance.inject({ method: "GET", url: "/admin?days=30", headers: viaCaddy });
+    expect(response.statusCode).toBe(200);
+    expect(queries.dashboard).toHaveBeenLastCalledWith(30);
+    expect(response.body).toContain("Últimos 30 dias");
+    await instance.inject({ method: "GET", url: "/admin?days=365", headers: viaCaddy });
+    expect(queries.dashboard).toHaveBeenLastCalledWith(7);
+  });
+
+  it("shows empty states without inventing activity or success rates", async () => {
+    const instance = await start();
+    queries.dashboard.mockResolvedValue({ totals: undefined, days: [] });
+    queries.connections.mockResolvedValue([]);
+    const response = await instance.inject({ method: "GET", url: "/admin", headers: viaCaddy });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("Nenhuma conexão cadastrada");
+    expect(response.body).toContain("Suas conexões começam aqui.");
+    expect(response.body).not.toMatch(/NaN|Infinity/);
   });
 
   it("lists connections and escapes what comes from WhatsApp", async () => {
@@ -123,7 +150,18 @@ describe("pages", () => {
     expect(response.body).toContain("+55 (85) 99913-2494");
     expect(response.body).toContain("&lt;b&gt;Loja&lt;/b&gt;");
     expect(response.body).not.toContain("<b>Loja</b>");
-    expect(queries.connections).toHaveBeenCalledWith({ status: "connecting", client: undefined });
+    expect(queries.connections).toHaveBeenCalledWith({ status: "connecting", client: undefined, search: undefined });
+  });
+
+  it("forwards a bounded search and preserves filters without rendering search markup", async () => {
+    const response = await (await start()).inject({
+      method: "GET", url: "/admin/connections?status=connected&client=tendi&q=%20%3Cscript%3E%20", headers: viaCaddy,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(queries.connections).toHaveBeenCalledWith({ status: "connected", client: "tendi", search: "<script>" });
+    expect(response.body).toContain('value="&lt;script&gt;"');
+    expect(response.body).not.toContain("<script>");
+    expect(response.body).toContain("q=%3Cscript%3E");
   });
 
   it("serves the QR of a waiting connection as an image", async () => {
