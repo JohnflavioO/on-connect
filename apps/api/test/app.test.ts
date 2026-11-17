@@ -21,6 +21,7 @@ const baseEnv = {
   PUBLIC_API_BASE_URL: "http://localhost:8080",
   DATABASE_URL: "postgresql://onconnect_app:unused@localhost:5432/postgres",
   API_KEY_PEPPER: PEPPER,
+  WEBHOOK_SECRET_KEY: Buffer.alloc(32, 7).toString("base64"),
 };
 
 // In-memory credential table: key A is valid, key B belongs to another

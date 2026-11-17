@@ -6,6 +6,7 @@ const valid = {
   PUBLIC_API_BASE_URL: "http://localhost:8080",
   DATABASE_URL: "postgresql://onconnect_app:pw@localhost:5432/postgres",
   API_KEY_PEPPER: "p".repeat(32),
+  WEBHOOK_SECRET_KEY: Buffer.alloc(32, 1).toString("base64"),
 };
 
 describe("loadApiEnv", () => {
@@ -57,8 +58,19 @@ describe("loadApiEnv", () => {
 });
 
 describe("loadWorkerEnv", () => {
+  const worker = {
+    REDIS_URL: "rediss://cache.internal:6380",
+    SYSTEM_DATABASE_URL: "postgresql://onconnect_system:pw@localhost:5432/postgres",
+    WEBHOOK_SECRET_KEY: Buffer.alloc(32, 1).toString("base64"),
+  };
+
   it("does not require API-only variables", () => {
-    const env = loadWorkerEnv({ REDIS_URL: "rediss://cache.internal:6380" });
+    const env = loadWorkerEnv(worker);
     expect(env.WORKER_CONCURRENCY).toBe(10);
+  });
+
+  it("requires a 32-byte webhook secret key", () => {
+    expect(() => loadWorkerEnv({ ...worker, WEBHOOK_SECRET_KEY: Buffer.alloc(16).toString("base64") }))
+      .toThrow(/WEBHOOK_SECRET_KEY/);
   });
 });

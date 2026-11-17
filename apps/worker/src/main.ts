@@ -3,12 +3,17 @@ import {
   QUEUE_NAMES,
   QUEUE_PREFIX,
   createLogger,
+  createPostgresPool,
   createRedis,
+  createSecretBox,
   loadWorkerEnv,
   type SystemPingJob,
 } from "@on-connect/core";
 import { Queue, Worker } from "bullmq";
 import { createSystemProcessor } from "./processors/system.js";
+import { createWebhookDispatcher } from "./webhooks/dispatcher.js";
+import { createPostgresDeliveryStore } from "./webhooks/store.js";
+import { createHttpsSender } from "./webhooks/transport.js";
 
 const SHUTDOWN_TIMEOUT_MS = 30_000;
 
@@ -51,6 +56,19 @@ async function main(): Promise<void> {
     logger.error({ queue: QUEUE_NAMES.system, err: error }, "worker error");
   });
 
+  // Webhook deliveries live in PostgreSQL (written with their events), not
+  // in Redis: the dispatcher claims due rows, so nothing is lost if Redis is.
+  const db = createPostgresPool({ connectionString: env.SYSTEM_DATABASE_URL, max: 5 }, (error) => {
+    logger.warn({ err: error }, "idle database connection failed");
+  });
+  const webhooks = createWebhookDispatcher({
+    store: createPostgresDeliveryStore(db),
+    box: createSecretBox(env.WEBHOOK_SECRET_KEY),
+    send: createHttpsSender(),
+    logger,
+    batchSize: env.WORKER_CONCURRENCY,
+  }).start();
+
   let shuttingDown = false;
   const shutdown = (signal: string): void => {
     if (shuttingDown) return;
@@ -64,9 +82,8 @@ async function main(): Promise<void> {
     forced.unref();
 
     // close() waits for in-flight jobs, so a deploy never cuts a job in half.
-    systemWorker
-      .close()
-      .then(() => systemQueue.close())
+    Promise.all([systemWorker.close(), webhooks.stop()])
+      .then(() => Promise.all([systemQueue.close(), db.close()]))
       .then(() => Promise.all([workerConnection.quit(), queueConnection.quit()]))
       .then(() => process.exit(0))
       .catch((error: unknown) => {
@@ -82,7 +99,10 @@ async function main(): Promise<void> {
   });
 
   await systemWorker.waitUntilReady();
-  logger.info({ queues: [QUEUE_NAMES.system], concurrency: env.WORKER_CONCURRENCY }, "worker ready");
+  logger.info(
+    { queues: [QUEUE_NAMES.system], webhooks: true, concurrency: env.WORKER_CONCURRENCY },
+    "worker ready",
+  );
 
   await systemQueue.add("ping", { requestedAt: new Date().toISOString() });
 }

@@ -28,9 +28,16 @@ Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
   `23762486-ee44-4017-8c4d-53e1d39e6265` ligada a um número de teste.
 
 ## Próximos passos, em ordem
-1. **Webhooks para o integrador**: rotas para cadastrar `webhook_endpoints`, worker que entrega
-   `webhook_events` (assinatura HMAC, novas tentativas, desativação após falhas). As tabelas já
-   existem e os eventos `message.received`/`message.status` já são gravados.
+1. **Webhooks para o integrador**: implementado na branch `feat/webhooks` (rotas
+   `/v1/webhook-endpoints`, trigger de fan-out, entrega pelo worker com HMAC, novas tentativas e
+   desativação; doc para o integrador em `docs/webhooks.md`). Para ir ao ar, nesta ordem e com ok
+   do usuário:
+   1. PR com CI verde e merge.
+   2. Aplicar a migration `webhook_delivery` no Supabase (`apply_migration`) e renomear o
+      arquivo para a versão registrada.
+   3. Na VPS: gerar `WEBHOOK_SECRET_KEY` com `openssl rand -base64 32` direto no `deploy/.env`
+      (o worker também passa a usar `SYSTEM_DATABASE_URL`, que já existe).
+   4. Deploy de `api` e `worker` (`up -d --build api worker`); a `api` não sobe sem a chave.
 2. **Limpeza de acesso**: apagar `/root/tendi-api-key.txt` na VPS depois de guardar a chave no
    Tendi e num gerenciador de senhas; criar usuário de deploy sem root; remover chaves SSH não usadas.
 3. **Configurar o Tendi**: URL base, API key, `maxConnections` dos tenants, endpoint de webhook.
