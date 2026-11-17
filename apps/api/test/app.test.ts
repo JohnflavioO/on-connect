@@ -109,6 +109,36 @@ describe("health", () => {
 });
 
 describe("received media links", () => {
+  it.each(["image/jpeg", "audio/ogg"])("allows an integrator to embed signed %s media without relaxing JSON routes", async (mimetype) => {
+    const dir = await mkdtemp(join(tmpdir(), "onconnect-api-media-origin-"));
+    try {
+      const vault = createMediaVault({ key: baseEnv.MEDIA_KEY, dir, publicBaseUrl: "http://localhost:8080" });
+      const url = await vault.save(Buffer.from("media-bytes"), { mimetype });
+      const path = new URL(url).pathname;
+      const instance = await start({ MEDIA_DIR: dir });
+      const headers = { origin: "https://tendidesk.com.br" };
+
+      for (const method of ["GET", "HEAD"] as const) {
+        const response = await instance.inject({ method, url: path, headers });
+        expect(response.statusCode).toBe(200);
+        expect(response.headers["content-type"]).toBe(mimetype);
+        expect(response.headers["cross-origin-resource-policy"]).toBe("cross-origin");
+        expect(response.headers["x-content-type-options"]).toBe("nosniff");
+      }
+
+      const tampered = path.replace(/.$/, (c) => c === "A" ? "B" : "A");
+      const invalid = await instance.inject({ method: "GET", url: tampered, headers });
+      expect(invalid.statusCode).toBe(404);
+      expect(invalid.headers["cross-origin-resource-policy"]).toBe("same-origin");
+
+      const json = await instance.inject({ method: "GET", url: "/v1/me", headers });
+      expect(json.statusCode).toBe(401);
+      expect(json.headers["cross-origin-resource-policy"]).toBe("same-origin");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("serves a stored file by its signed link, without an API key or the database", async () => {
     const dir = await mkdtemp(join(tmpdir(), "onconnect-api-media-"));
     try {

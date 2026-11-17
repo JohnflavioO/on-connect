@@ -2,6 +2,30 @@
 
 Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
 
+## Integração Tendi e mídia no navegador (2026-11-17)
+
+- PR #26 (`d9ac857`) implantado em sessions; o usuário confirmou que o envio
+  com o número original de 13 dígitos passou a chegar após a resolução do JID.
+- Tendi PR #101 (`ada1ac9`) integrado e em Production na Vercel. O usuário
+  configurou base/chave do On Connect, domínio do callback e novo segredo.
+  O número da própria Tendi foi pareado pelo QR da interface do Tendi, criando
+  a sessão `tendi-<organizationId>`; a conexão nativa `teste` foi preservada.
+- Recebimento confirmado no Inbox correto e webhook D-API ativo, zero falhas,
+  entregas HTTP 200 na primeira tentativa. A resposta pelo Inbox aparece na
+  conversa. Somente a própria Tendi usa um número nessa integração atualmente.
+- Imagem e áudio recebidos aparecem indisponíveis: diagnóstico na VPS confirmou
+  link presente e HTTP 200 (`image/jpeg` e `audio/ogg`), mas a API responde
+  `Cross-Origin-Resource-Policy: same-origin`, bloqueando o uso pelo Tendi.
+- Correção na branch `fix/media-cross-origin`: permitir `cross-origin` somente
+  em respostas de mídia com token válido; JSON/erros mantêm `same-origin`,
+  validação de assinatura e `nosniff` preservados. Build, typecheck, lint e
+  249 testes passaram; 74 testes de integração não executados. Os dois testes
+  novos de imagem/áudio reproduziram a falha antes da correção. Chromium carregou
+  imagem e áudio da API real em uma página local de outra origem após o ajuste.
+- Commit/PR e deploy desta correção pendentes. Após CI verde e merge, atualizar
+  somente a API e recarregar o Inbox para validar os arquivos já recebidos.
+  Depois confirmar envio de mídia pelo Inbox e revisar os rótulos D-API legados.
+
 ## Validação de envio e correção do destinatário (2026-11-17)
 
 - A correção do formulário foi integrada no PR #25 (`dc861a3`) e implantada
