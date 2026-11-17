@@ -18,10 +18,29 @@
 	@health path /health /health/*
 	respond @health 404
 
-	reverse_proxy api:8080 {
-		health_uri /health/ready
-		health_interval 10s
-		health_timeout 3s
+	# Super-admin panel: Caddy asks for the admin password (bcrypt hash in
+	# deploy/.env), then forwards with a secret the panel requires, so it
+	# cannot be reached around this check. header_up replaces any value a
+	# client sends for these headers.
+	handle /admin* {
+		basic_auth {
+			{$ADMIN_USER} {$ADMIN_PASSWORD_HASH}
+		}
+		reverse_proxy admin:8081 {
+			header_up X-OnConnect-Admin-Secret {$ADMIN_PROXY_SECRET}
+			header_up X-OnConnect-Admin-User {http.auth.user.id}
+		}
+	}
+
+	handle {
+		reverse_proxy api:8080 {
+			health_uri /health/ready
+			health_interval 10s
+			health_timeout 3s
+			# Only the admin route may carry these.
+			header_up -X-OnConnect-Admin-Secret
+			header_up -X-OnConnect-Admin-User
+		}
 	}
 
 	log {
@@ -31,6 +50,7 @@
 			wrap json
 			fields {
 				request>uri regexp ^/media/[^/?#]+ /media/[REDACTED]
+				request>headers>Authorization delete
 			}
 		}
 	}
