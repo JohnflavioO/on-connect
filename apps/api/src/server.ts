@@ -26,7 +26,7 @@ async function main(): Promise<void> {
     },
   });
 
-  const app = await buildApp({ env, checkRedis: () => pingRedis(redis), authenticator });
+  const app = await buildApp({ env, checkRedis: () => pingRedis(redis), authenticator, db });
 
   let shuttingDown = false;
   const shutdown = (signal: string): void => {
