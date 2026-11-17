@@ -22,6 +22,32 @@ e apresenta o instante em que a página foi consultada. Atualize a página ou us
   de status e slug do cliente. A consulta mantém o limite de 500 registros.
   Cada linha abre a página existente com QR, reinício e desconexão auditados.
 
+### Monitoramento
+
+`/admin/monitoring` responde "a plataforma está saudável agora?", no estilo do
+Monitoramento da D-API. Períodos: **Ao vivo (1 h)** (padrão, recarrega a cada
+30 s enquanto a aba está visível), 24 horas, 7 dias e 30 dias.
+
+- **Avisos no topo**, críticos primeiro: nenhuma conexão conectada, conexões
+  fora do ar, endpoint de webhook desativado, entregas de webhook abaixo de 90%
+  de sucesso ou abandonadas, envios com falha e mensagens presas na fila há mais
+  de 5 minutos. Sem problemas, aparece "Tudo funcionando".
+- **Cartões** com selo Saudável / Atenção / Crítico / Sem dados:
+  - *Conexões*: conectadas/total agora e quedas no período.
+  - *Envios*: % de sucesso, falhas e mensagens presas (5% ou mais de falha, ou
+    10 presas, é crítico).
+  - *Webhooks*: % de entregas com sucesso no período, novas tentativas,
+    desistências e tempo médio entre o evento e a entrega (abaixo de 90% ou
+    endpoint desativado é crítico; abaixo de 99% ou alguma desistência, atenção).
+  - *Recebimento*: mensagens recebidas no período e quando chegou a última.
+- **Gráficos**: tráfego (recebidas, enviadas, webhooks entregues) e falhas por
+  origem (webhooks, envios, quedas de conexão), em intervalos de 1 min (1 h),
+  1 h (24 h), 6 h (7 dias) ou 1 dia (30 dias). As legendas ligam/desligam séries.
+- **Conexões fora do ar agora**, com o motivo e há quanto tempo.
+
+As regras de saúde estão em `apps/admin/src/monitoring.ts` (`evaluateHealth`).
+Erros HTTP da API ainda não entram: a API não guarda essas contagens.
+
 Os dados são consultados no banco; a página não exibe conteúdo de mensagens.
 O formato de payload `dapi` aparece como **Compatibilidade**, sem alterar o
 contrato enviado aos integradores.

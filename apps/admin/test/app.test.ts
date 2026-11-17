@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildAdminApp } from "../src/app.js";
 import { escapeHtml, formatPhone, maskUrl } from "../src/html.js";
-import type { AdminQueries } from "../src/queries.js";
+import { ago, evaluateHealth } from "../src/monitoring.js";
+import type { AdminQueries, MonitoringTotals } from "../src/queries.js";
 
 const SECRET = "proxy-secret-proxy-secret-proxy-secret";
 const ORIGIN = "https://onconnect.example.com";
@@ -47,6 +48,25 @@ function fakeQueries() {
     deliveries: vi.fn<AdminQueries["deliveries"]>(async () => []),
     resendDelivery: vi.fn(async () => true),
     reactivateEndpoint: vi.fn(async () => true),
+    monitoring: vi.fn<AdminQueries["monitoring"]>(async () => ({
+      totals: healthyTotals({ live: "2", connected: "1", dead: "1", delivered: "40", disabled_endpoints: "1" }),
+      buckets: [
+        { at: new Date("2026-11-17T15:00:00Z"), received: "3", sent: "2", send_failed: "0", delivered: "5", webhook_failed: "1", drops: "0" },
+        { at: new Date("2026-11-17T15:01:00Z"), received: "0", sent: "1", send_failed: "1", delivered: "1", webhook_failed: "0", drops: "1" },
+      ],
+      problems: [{
+        id: CONN, session_key: "tendi-org-1", tenant: "tendi-org-1", client_slug: "tendi", status: "disconnected",
+        status_reason: "logged_out", status_changed_at: new Date("2026-11-17T14:00:00Z"),
+      }],
+    })),
+  };
+}
+
+function healthyTotals(overrides: Partial<MonitoringTotals> = {}): MonitoringTotals {
+  return {
+    live: "2", connected: "2", drops: "0", received: "10", sent: "10", send_failed: "0", send_stuck: "0",
+    last_received_at: new Date("2026-11-17T15:00:00Z"), delivered: "20", retrying: "0", dead: "0", queued: "0",
+    delivery_ms: "250", disabled_endpoints: "0", ...overrides,
   };
 }
 
@@ -244,6 +264,73 @@ describe("pages", () => {
     expect((await instance.inject({ method: "GET", url: "/admin/connections/not-a-uuid", headers: viaCaddy })).statusCode).toBe(404);
     expect((await instance.inject({ method: "GET", url: `/admin/clients/${CONN}`, headers: viaCaddy })).statusCode).toBe(404);
     expect((await instance.inject({ method: "GET", url: "/admin/nothing", headers: viaCaddy })).statusCode).toBe(404);
+  });
+});
+
+describe("monitoring", () => {
+  const NOW = new Date("2026-11-17T15:05:00Z");
+  const tones = (overrides: Partial<MonitoringTotals>) =>
+    Object.fromEntries(evaluateHealth(healthyTotals(overrides), "24h", NOW).cards.map((c) => [c.key, c.tone]));
+
+  it("calls everything healthy with no alerts when nothing is wrong", () => {
+    const { cards, alerts } = evaluateHealth(healthyTotals(), "24h", NOW);
+    expect(cards.map((c) => c.tone)).toEqual(["ok", "ok", "ok", "ok"]);
+    expect(alerts).toEqual([]);
+  });
+
+  it("grades connections: some down is attention, all down is critical", () => {
+    expect(tones({ connected: "1" }).connections).toBe("warn");
+    expect(tones({ connected: "0" }).connections).toBe("bad");
+    expect(tones({ live: "0", connected: "0" }).connections).toBe("idle");
+  });
+
+  it("grades webhooks by success rate and treats a disabled endpoint as critical", () => {
+    expect(tones({ delivered: "95", dead: "5" }).webhooks).toBe("warn");
+    expect(tones({ delivered: "8", dead: "2", retrying: "2" }).webhooks).toBe("bad");
+    expect(tones({ disabled_endpoints: "1" }).webhooks).toBe("bad");
+    expect(tones({ delivered: "0" }).webhooks).toBe("idle");
+  });
+
+  it("grades sending by failures and messages stuck in the queue", () => {
+    expect(tones({ send_failed: "1", sent: "99" }).sending).toBe("warn");
+    expect(tones({ send_failed: "10", sent: "90" }).sending).toBe("bad");
+    expect(tones({ send_stuck: "2" }).sending).toBe("warn");
+    expect(tones({ sent: "0", send_failed: "0" }).sending).toBe("idle");
+  });
+
+  it("lists critical alerts before attention ones", () => {
+    const { alerts } = evaluateHealth(healthyTotals({ connected: "1", disabled_endpoints: "1" }), "24h", NOW);
+    expect(alerts.map((a) => a.tone)).toEqual(["bad", "warn"]);
+    expect(alerts[0]?.text).toContain("desativado");
+  });
+
+  it("says how long ago things happened", () => {
+    expect(ago(null, NOW)).toBe("nunca");
+    expect(ago(new Date("2026-11-17T15:04:40Z"), NOW)).toBe("agora");
+    expect(ago(new Date("2026-11-17T15:00:00Z"), NOW)).toBe("há 5 min");
+    expect(ago(new Date("2026-11-17T12:05:00Z"), NOW)).toBe("há 3 h");
+  });
+
+  it("renders the page with alerts, cards, charts and the live refresh", async () => {
+    const instance = await start();
+    const response = await instance.inject({ method: "GET", url: "/admin/monitoring", headers: viaCaddy });
+    expect(response.statusCode).toBe(200);
+    expect(queries.monitoring).toHaveBeenCalledWith("1h");
+    expect(response.body).toContain("Monitoramento");
+    expect(response.body).toContain("monitor-alert bad");
+    expect(response.body).toContain("Crítico");
+    expect(response.body).toContain("tendi-org-1");
+    expect(response.body).toContain("data-autorefresh");
+    expect(response.body).toContain('aria-current="page"');
+  });
+
+  it("accepts only known periods and refreshes itself only in the live view", async () => {
+    const instance = await start();
+    const week = await instance.inject({ method: "GET", url: "/admin/monitoring?period=7d", headers: viaCaddy });
+    expect(queries.monitoring).toHaveBeenLastCalledWith("7d");
+    expect(week.body).not.toContain("data-autorefresh");
+    await instance.inject({ method: "GET", url: "/admin/monitoring?period=toString", headers: viaCaddy });
+    expect(queries.monitoring).toHaveBeenLastCalledWith("1h");
   });
 });
 
