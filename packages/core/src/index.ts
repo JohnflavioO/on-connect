@@ -1,6 +1,8 @@
 export {
   EnvValidationError,
+  loadAdminEnv,
   loadApiEnv,
+  type AdminEnv,
   loadSessionsEnv,
   loadWorkerEnv,
   type ApiEnv,

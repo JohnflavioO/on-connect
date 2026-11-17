@@ -22,9 +22,10 @@ apps/
   api/       Fastify. Recebe chamadas dos integradores.
   sessions/  Baileys. Mantém os sockets do WhatsApp Web (uma réplica só).
   worker/    BullMQ e entrega de webhooks (lê entregas pendentes do banco).
+  admin/     Painel super admin em /admin, atrás da senha da Caddy (docs/admin.md).
 packages/
   core/      Ambiente, logger com redação, Redis, filas, banco, auth, repositórios.
-deploy/      Stack de produção: Caddy + api + sessions + worker + Redis.
+deploy/      Stack de produção: Caddy + api + sessions + worker + admin + Redis.
 ```
 
 ## Desenvolvimento

@@ -47,7 +47,9 @@ Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
    (mídia recebida com `media_url`, envio de mídia, avatar) na branch `feat/dapi-compat-media`,
    que exige `MEDIA_KEY` nova no `deploy/.env` (`openssl rand -base64 32`) e cria o volume
    `media_data`. Depois das fases 1 a 3 o Tendi pode trocar de provedor (ver
-   `docs/dapi-compat.md`). Fase 4: painel super admin.
+   `docs/dapi-compat.md`). Fase 4: painel super admin em `/admin` (ver `docs/admin.md`) na
+   branch `feat/admin-panel`; exige `ADMIN_USER`, `ADMIN_PASSWORD_HASH` e `ADMIN_PROXY_SECRET`
+   no `deploy/.env` e sobe o serviço `admin`.
 1. **Limpeza de acesso** (usuário `deploy` já criado e testado em 2026-11-17). Falta:
    - No PC de casa: listar as chaves (`ssh-keygen -lf ~/.ssh/*.pub`) e ver qual das duas chaves
      extras do root é dele: `onconnect-deploy` (`SHA256:n2MOjbgW...`) ou

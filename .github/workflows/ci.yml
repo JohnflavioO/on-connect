@@ -81,7 +81,7 @@ jobs:
         # Every file shares one database and alters the onconnect_app role,
         # so neither packages nor files may run in parallel.
         run: >-
-          pnpm --filter @on-connect/core --filter @on-connect/api --filter @on-connect/sessions --filter @on-connect/worker --workspace-concurrency=1
+          pnpm --filter @on-connect/core --filter @on-connect/api --filter @on-connect/sessions --filter @on-connect/worker --filter @on-connect/admin --workspace-concurrency=1
           exec vitest run --no-file-parallelism --passWithNoTests integration.test.ts
 
   docker:
@@ -93,3 +93,4 @@ jobs:
       - run: docker build --target api -t on-connect-api:ci .
       - run: docker build --target worker -t on-connect-worker:ci .
       - run: docker build --target sessions -t on-connect-sessions:ci .
+      - run: docker build --target admin -t on-connect-admin:ci .

@@ -83,7 +83,29 @@ const sessionsSchema = baseSchema.extend({
   MEDIA_RETENTION_DAYS: z.coerce.number().int().min(7).max(3_650).default(90),
 });
 
+/**
+ * Super-admin panel. Reached only through Caddy, which asks for the admin
+ * password and adds ADMIN_PROXY_SECRET to every request it forwards; the
+ * panel refuses anything without it, so no other container can bypass Caddy.
+ */
+const adminSchema = baseSchema.extend({
+  ADMIN_HOST: z.string().min(1).default("0.0.0.0"),
+  ADMIN_PORT: z.coerce.number().int().min(1).max(65535).default(8081),
+  /** onconnect_system: the panel sees every client. */
+  SYSTEM_DATABASE_URL: postgresUrl("SYSTEM_DATABASE_URL"),
+  /** Needed to issue API keys from the panel. */
+  API_KEY_PEPPER: z.string().min(32, "API_KEY_PEPPER must have at least 32 characters"),
+  ADMIN_PROXY_SECRET: z.string().min(32, "ADMIN_PROXY_SECRET must have at least 32 characters"),
+  /** e.g. https://onconnect.tendidesk.com.br: forms are accepted only from it. */
+  ADMIN_ORIGIN: z.url(),
+});
+
 export type BaseEnv = z.infer<typeof baseSchema>;
+export type AdminEnv = z.infer<typeof adminSchema>;
+
+export function loadAdminEnv(source: EnvSource = process.env): AdminEnv {
+  return parse(adminSchema, source);
+}
 export type ApiEnv = z.infer<typeof apiSchema>;
 export type WorkerEnv = z.infer<typeof workerSchema>;
 export type SessionsEnv = z.infer<typeof sessionsSchema>;
