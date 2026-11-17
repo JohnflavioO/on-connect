@@ -89,11 +89,14 @@ describe("access guard", () => {
     expect((await instance.inject({ method: "GET", url: "/health/live" })).statusCode).toBe(200);
   });
 
-  it("refuses state changes from another site or without an Origin", async () => {
+  it("refuses state changes from another site, an opaque origin or without an Origin", async () => {
     const instance = await start();
     expect((await post(instance, `/admin/connections/${CONN}/logout`, "", "https://evil.example")).statusCode).toBe(403);
     expect((await post(instance, `/admin/connections/${CONN}/logout`, "", null)).statusCode).toBe(403);
+    expect((await post(instance, `/admin/connections/${CONN}/logout`, "", "null")).statusCode).toBe(403);
     expect(sessions.logout).not.toHaveBeenCalled();
+    expect((await post(instance, `/admin/clients/${CLIENT}/keys`, "label=test", "null")).statusCode).toBe(403);
+    expect(queries.issueKey).not.toHaveBeenCalled();
   });
 
   it("sends strict security headers", async () => {
@@ -101,6 +104,7 @@ describe("access guard", () => {
     expect(response.headers["content-security-policy"]).toContain("script-src 'self'");
     expect(response.headers["x-frame-options"]).toBe("DENY");
     expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers["referrer-policy"]).toBe("same-origin");
   });
 });
 

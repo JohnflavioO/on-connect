@@ -2,6 +2,24 @@
 
 Atualizado em 2026-11-17. Atualize este arquivo ao fim de cada etapa.
 
+## Atualização após o deploy do painel (2026-11-17)
+
+- O usuário confirmou o deploy de `3f89aee` (PR #24) na VPS: api/admin/Redis
+  saudáveis; sessions/worker/Caddy em execução; `/admin` sem login retorna 401
+  e o dashboard abre com login. Recebimento real confirmado (contador 60 → 61).
+- A migration `dapi_compat_sessions` foi executada pelo SQL Editor; presença de
+  `session_key`, `payload_format` e do trigger conferida. Nenhum endpoint de
+  webhook cadastrado. Envio após o deploy ainda não validado (API key recusada).
+- Criação de chave pelo painel retorna 403: logs mostram `Origin: null` com
+  `ADMIN_ORIGIN` correto. Correção local na branch `fix/admin-form-origin`:
+  trocar `Referrer-Policy: no-referrer` por `same-origin`, mantendo a recusa de
+  origens externas, ausentes ou `null`. `pnpm check` passou (236 testes;
+  74 testes de integração não executados). Reprodução local em Chromium com
+  formulário HTML: `no-referrer` enviou `Origin: null`; `same-origin` enviou a
+  origem correta. Commit/PR e deploy pendentes.
+- O registro abaixo descreve o estado anterior a esse deploy. Depois da
+  correção, retomar criação da chave de teste, envio, mídia, webhooks e Tendi.
+
 ## Em produção
 - API: `https://onconnect.tendidesk.com.br/v1` (VPS Hostinger, Ubuntu 26.04, `/opt/on-connect`).
 - Banco: Supabase, projeto `yebiezsnsifsvylspsli` (região us-west-2), via session pooler
