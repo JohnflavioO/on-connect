@@ -7,6 +7,7 @@ import {
   type ApiEnv,
   type ApiKeyAuthenticator,
   type DatabasePool,
+  type SessionGateway,
 } from "@on-connect/core";
 import Fastify, { type FastifyInstance } from "fastify";
 import { healthRoutes } from "./routes/health.js";
@@ -21,6 +22,8 @@ export interface AppDependencies {
   authenticator: ApiKeyAuthenticator;
   /** onconnect_app pool; every query goes through withClientTransaction. */
   db: DatabasePool;
+  /** Commands and QR codes of the WhatsApp Web sessions process. */
+  sessions: SessionGateway;
 }
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
@@ -105,6 +108,7 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
     prefix: "/v1",
     authenticator: deps.authenticator,
     db: deps.db,
+    sessions: deps.sessions,
   });
 
   return app;

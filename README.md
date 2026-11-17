@@ -1,22 +1,28 @@
 # On Connect
 
-Plataforma independente de conectividade WhatsApp (Meta Cloud API oficial),
-multi-tenant, consumida por API. O Tendi é o primeiro cliente integrador.
+Plataforma independente de conectividade WhatsApp, multi-tenant, consumida por
+API. O Tendi é o primeiro cliente integrador. O primeiro provedor é o WhatsApp
+Web (não oficial, vinculado por QR code ou código de pareamento); a Meta Cloud
+API oficial entra depois, atrás da mesma API.
 
-> **Estado atual:** fundação do monorepo. API com health checks e autenticação
-> por API key (`GET /v1/me`), gestão de tenants (`/v1/tenants`), worker com
-> fila de verificação, CI e stack de deploy. Schema multi-tenant com RLS no
-> banco. Conexões, mensagens e webhooks ainda **não** estão implementados.
+> **Estado atual:** autenticação por API key (`GET /v1/me`), tenants
+> (`/v1/tenants`) e conexões WhatsApp Web (`/v1/tenants/:id/connections`,
+> `/v1/connections/:id/qr`, `/pairing-code`, `/restart`). Envio e recebimento
+> de mensagens e webhooks para o integrador ainda **não** estão implementados.
+>
+> **Risco do provedor não oficial:** viola os termos de uso do WhatsApp; o
+> número pode ser banido e o protocolo pode mudar sem aviso.
 
 ## Estrutura
 
 ```
 apps/
-  api/       Fastify. Recebe chamadas dos integradores e webhooks da Meta.
+  api/       Fastify. Recebe chamadas dos integradores.
+  sessions/  Baileys. Mantém os sockets do WhatsApp Web (uma réplica só).
   worker/    BullMQ. Processa filas (envio, eventos, entregas de webhook).
 packages/
-  core/      Contrato de ambiente, logger com redação, Redis, nomes de filas.
-deploy/      Stack de produção: Caddy + api + worker + Redis.
+  core/      Ambiente, logger com redação, Redis, filas, banco, auth, repositórios.
+deploy/      Stack de produção: Caddy + api + sessions + worker + Redis.
 ```
 
 ## Desenvolvimento

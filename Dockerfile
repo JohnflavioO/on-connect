@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# One Dockerfile, two images: `--target api` and `--target worker`.
+# One Dockerfile, three images: `--target api`, `--target worker`, `--target sessions`.
 
 FROM node:24-alpine AS build
 ENV PNPM_HOME=/pnpm
@@ -12,6 +12,7 @@ WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/
+COPY apps/sessions/package.json apps/sessions/
 COPY packages/core/package.json packages/core/
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
@@ -24,7 +25,8 @@ RUN pnpm -r build
 # dependencies only, no dev tooling and no source.
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm --filter @on-connect/api deploy --prod --legacy /out/api \
- && pnpm --filter @on-connect/worker deploy --prod --legacy /out/worker
+ && pnpm --filter @on-connect/worker deploy --prod --legacy /out/worker \
+ && pnpm --filter @on-connect/sessions deploy --prod --legacy /out/sessions
 
 
 FROM node:24-alpine AS runtime
@@ -46,4 +48,9 @@ CMD ["node", "dist/server.js"]
 
 FROM runtime AS worker
 COPY --from=build --chown=node:node /out/worker ./
+CMD ["node", "dist/main.js"]
+
+
+FROM runtime AS sessions
+COPY --from=build --chown=node:node /out/sessions ./
 CMD ["node", "dist/main.js"]

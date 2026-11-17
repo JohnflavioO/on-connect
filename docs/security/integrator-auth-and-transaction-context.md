@@ -103,3 +103,24 @@ under that role. Never claim otherwise.
 4. Review privilege boundaries and run CI before PR review.
 
 Do not apply migrations to Supabase, merge, or deploy as part of this plan.
+
+## WhatsApp Web connections (provider `whatsapp_web`)
+
+- Routes (API key required): `POST/GET /v1/tenants/:externalId/connections`,
+  `GET /v1/connections/:id`, `GET /v1/connections/:id/qr`,
+  `POST /v1/connections/:id/pairing-code`, `POST /v1/connections/:id/restart`,
+  `DELETE /v1/connections/:id`. Each route first loads the connection in a
+  client-scoped transaction; another client's connection is a 404, and no QR,
+  pairing code or logout is ever produced for it.
+- Creation enforces the tenant's commercial/operational status and
+  `max_connections` (default 0) under a row lock on the tenant.
+- The `sessions` process owns the sockets and runs as `onconnect_system`
+  (`SYSTEM_DATABASE_URL`), never reachable from requests. API → sessions
+  commands go through the `sessions` BullMQ queue; QR and pairing codes come
+  back through Redis keys with short TTLs.
+- Session keys live in local Redis, one hash per connection, each value
+  AES-256-GCM sealed with `SESSION_STATE_KEY` and bound to its field name.
+- A phone number can be live in one WhatsApp Web connection only (partial
+  unique index); a second link is logged out with `number_already_connected`.
+- Risk accepted by the product owner: the provider is unofficial and violates
+  WhatsApp's terms; numbers can be banned. No ban-evasion features are built.

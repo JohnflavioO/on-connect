@@ -13,6 +13,7 @@ import {
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
+import { FakeSessions } from "./support/fake-sessions.js";
 
 const enabled = process.env.RUN_POSTGRES_INTEGRATION === "1";
 const PEPPER = "tenant-integration-pepper-tenant-integration";
@@ -88,6 +89,7 @@ describe.skipIf(!enabled)("tenant access isolation (PostgreSQL 17)", () => {
         pepper: PEPPER,
       }),
       db,
+      sessions: new FakeSessions(),
     });
   });
 

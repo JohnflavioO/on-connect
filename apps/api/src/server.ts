@@ -4,6 +4,7 @@ import {
   createPostgresCredentialStore,
   createPostgresPool,
   createRedis,
+  createSessionGateway,
   loadApiEnv,
   pingRedis,
 } from "@on-connect/core";
@@ -26,7 +27,15 @@ async function main(): Promise<void> {
     },
   });
 
-  const app = await buildApp({ env, checkRedis: () => pingRedis(redis), authenticator, db });
+  const sessions = createSessionGateway({ redis });
+
+  const app = await buildApp({
+    env,
+    checkRedis: () => pingRedis(redis),
+    authenticator,
+    db,
+    sessions,
+  });
 
   let shuttingDown = false;
   const shutdown = (signal: string): void => {
@@ -44,6 +53,7 @@ async function main(): Promise<void> {
     // then release Redis and the database pool.
     app
       .close()
+      .then(() => sessions.close())
       .then(() => Promise.all([redis.quit(), db.close()]))
       .then(() => process.exit(0))
       .catch((error: unknown) => {
