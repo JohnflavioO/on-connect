@@ -13,30 +13,6 @@ permissions:
   contents: read
 
 jobs:
-  lockfile-refresh:
-    name: Refresh dependency lockfile (temporary)
-    if: github.event_name == 'pull_request' && github.head_ref == 'feat/database-transaction-context'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: feat/database-transaction-context
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - run: pnpm install --lockfile-only --no-frozen-lockfile
-      - run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pnpm-lock.yaml
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(lockfile): resolve PostgreSQL driver"
-            git push origin HEAD:feat/database-transaction-context
-          fi
-
   check:
     name: Build, typecheck, lint, test
     runs-on: ubuntu-latest
