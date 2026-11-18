@@ -2,6 +2,9 @@ import { timingSafeEqual } from "node:crypto";
 import { WEBHOOK_EVENT_TYPES, loggerOptions, type SessionGateway } from "@on-connect/core";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import QRCode from "qrcode";
+import type { AdminAuth } from "./admin-auth.js";
+import { PUBLIC_CSS } from "./public-css.js";
+import { landingPage, loginPage } from "./public-pages.js";
 import { CSS, JS } from "./assets.js";
 import { FAVICON_SVG, ICON_PNG, LOGO_PNG } from "./brand.js";
 import { connectionTable, dashboardView } from "./dashboard.js";
@@ -22,6 +25,7 @@ export interface AdminAppOptions {
   sessions: Pick<SessionGateway, "start" | "logout" | "currentQr">;
   /** Caddy adds it to every proxied request; anything without it is refused. */
   proxySecret: string;
+  auth: AdminAuth;
   /** Scheme and host of the panel, e.g. https://onconnect.tendidesk.com.br. */
   origin: string;
   logLevel: string;
@@ -49,13 +53,11 @@ const STATUS_FILTERS: Array<[string, string]> = [
 ];
 
 /**
- * The super-admin panel (server-rendered HTML under /admin). It trusts no
- * request that did not come through Caddy (proxy secret), and accepts state
- * changes only from its own pages (Origin check), since the browser re-sends
- * basic-auth credentials on any cross-site form post.
+ * The public site and super-admin panel are served through Caddy. Panel
+ * requests require an admin session and form posts require the configured origin.
  */
 export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyInstance> {
-  const { queries, sessions } = options;
+  const { queries, sessions, auth } = options;
   const origin = new URL(options.origin).origin;
 
   const app = Fastify({
@@ -75,7 +77,6 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
   app.addHook("onRequest", async (request, reply) => {
     if (request.url === "/health/live") return undefined;
     if (!sameSecret(request.headers["x-onconnect-admin-secret"] as string | undefined, options.proxySecret)) {
-      // Not through Caddy: answer as if the panel did not exist.
       return reply.code(404).send("Not found");
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -84,6 +85,16 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
         request.log.warn({ origin: from }, "admin form from another origin refused");
         return reply.code(403).send("Forbidden");
       }
+    }
+    const path = request.url.split("?", 1)[0];
+    if (path === "/" || path === "/admin/login" || path === "/assets/on-connect.css"
+      || path === "/admin/assets/admin.css" || path === "/admin/assets/logo.png"
+      || path === "/admin/assets/icon.png" || path === "/admin/assets/favicon.svg") return undefined;
+    if (!(await auth.authenticated(request.headers.cookie))) {
+      if (request.method === "GET" || request.method === "HEAD") {
+        return reply.redirect("/admin/login", 303);
+      }
+      return reply.code(401).send("Acesso restrito");
     }
     return undefined;
   });
@@ -100,13 +111,10 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     return payload;
   });
 
-  const adminOf = (request: FastifyRequest): Admin => {
-    const user = request.headers["x-onconnect-admin-user"];
-    return { name: typeof user === "string" && user ? user.slice(0, 100) : "admin" };
-  };
+  const adminOf = (): Admin => ({ name: auth.username });
 
-  const show = (reply: FastifyReply, request: FastifyRequest, options2: Omit<Parameters<typeof page>[0], "user">) =>
-    reply.type("text/html; charset=utf-8").send(page({ ...options2, user: adminOf(request).name }));
+  const show = (reply: FastifyReply, _request: FastifyRequest, options2: Omit<Parameters<typeof page>[0], "user">) =>
+    reply.type("text/html; charset=utf-8").send(page({ ...options2, user: adminOf().name }));
 
   const back = (reply: FastifyReply, location: string, notice: string) =>
     reply.redirect(`${location}${location.includes("?") ? "&" : "?"}ok=${encodeURIComponent(notice)}`, 303);
@@ -125,6 +133,30 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
   app.get("/admin/assets/logo.png", async (_request, reply) => reply.type("image/png").send(LOGO_PNG));
   app.get("/admin/assets/icon.png", async (_request, reply) => reply.type("image/png").send(ICON_PNG));
   app.get("/admin/assets/favicon.svg", async (_request, reply) => reply.type("image/svg+xml").send(FAVICON_SVG));
+  app.get("/", async (_request, reply) => reply.type("text/html; charset=utf-8").send(landingPage()));
+  app.get("/assets/on-connect.css", async (_request, reply) =>
+    reply.type("text/css; charset=utf-8").send(PUBLIC_CSS));
+  app.get("/admin/login", async (request, reply) => {
+    if (await auth.authenticated(request.headers.cookie)) return reply.redirect("/admin", 303);
+    return reply.type("text/html; charset=utf-8").send(loginPage());
+  });
+  app.post<{ Body: unknown }>("/admin/login", { bodyLimit: 4096 }, async (request, reply) => {
+    const body = request.body as { username?: unknown; password?: unknown } | null | undefined;
+    const username = typeof body?.username === "string" ? body.username : "";
+    const password = typeof body?.password === "string" ? body.password : "";
+    const ip = request.headers["x-onconnect-login-ip"];
+    const result = await auth.signIn(typeof ip === "string" ? ip : request.ip, username, password);
+    if (result.status === "ok") return reply.header("set-cookie", result.cookie).redirect("/admin", 303);
+    const limited = result.status === "limited";
+    if (limited) reply.header("retry-after", result.retryAfter);
+    return reply.code(limited ? 429 : 401).type("text/html; charset=utf-8").send(loginPage(limited
+      ? "Muitas tentativas. Aguarde um minuto e tente novamente."
+      : "Usuário ou senha inválidos."));
+  });
+  app.post("/admin/logout", async (request, reply) => {
+    const cookie = await auth.signOut(request.headers.cookie);
+    return reply.header("set-cookie", cookie).redirect("/admin/login", 303);
+  });
   app.get("/admin/assets/admin.css", async (_request, reply) => reply.type("text/css; charset=utf-8").send(CSS));
   app.get("/admin/assets/admin.js", async (_request, reply) =>
     reply.type("text/javascript; charset=utf-8").send(JS));
@@ -195,6 +227,24 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     });
   });
 
+  app.post<{ Params: { id: string }; Body: unknown }>(
+    "/admin/connections/:id/settings", async (request, reply) => {
+      const { id } = request.params;
+      if (!UUID.test(id)) return notFound(reply, request, "Conexão");
+      if (!request.body || typeof request.body !== "object" || Array.isArray(request.body)) {
+        return reply.code(400).send("Configuração inválida");
+      }
+      const { rejectCalls, readOnReply } = request.body as Record<string, unknown>;
+      if ([rejectCalls, readOnReply].some((value) => value !== undefined && value !== "on")) {
+        return reply.code(400).send("Configuração inválida");
+      }
+      if (!(await queries.updateConnectionBehavior(adminOf(), id, rejectCalls === "on", readOnReply === "on"))) {
+        return notFound(reply, request, "Conexão");
+      }
+      return back(reply, `/admin/connections/${id}?tab=configuracoes`, "Configurações salvas.");
+    },
+  );
+
   // Deleting needs the word typed in the form, on top of the browser confirm.
   app.post<{ Params: { id: string }; Body: { confirm?: string } }>("/admin/connections/:id/delete", async (request, reply) => {
     const { id } = request.params;
@@ -202,7 +252,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     if (request.body.confirm !== "EXCLUIR") {
       return back(reply, `/admin/connections/${id}`, "Para excluir, digite EXCLUIR no campo de confirmação.");
     }
-    if (!(await queries.deleteConnection(adminOf(request), id))) return reply.code(404).send("Not found");
+    if (!(await queries.deleteConnection(adminOf(), id))) return reply.code(404).send("Not found");
     await sessions.logout(id);
     return back(reply, "/admin/connections", "Conexão excluída. O número foi desconectado.");
   });
@@ -234,7 +284,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     if (!row) return reply.code(404).send("Not found");
     if (action === "restart") await sessions.start(id);
     else await sessions.logout(id);
-    await queries.auditConnection(adminOf(request), row.client_id, id,
+    await queries.auditConnection(adminOf(), row.client_id, id,
       action === "restart" ? "connection.restarted" : "connection.logged_out");
     return back(reply, `/admin/connections/${id}`,
       action === "restart" ? "Reinício pedido. O QR aparece em alguns segundos." : "Desconexão pedida.");
@@ -278,7 +328,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     const name = (request.body.name ?? "").trim().slice(0, 100);
     const slug = (request.body.slug ?? "").trim();
     if (!name || !SLUG.test(slug)) return back(reply, "/admin/clients", "Nome ou slug inválido.");
-    const id = await queries.createClient(adminOf(request), slug, name);
+    const id = await queries.createClient(adminOf(), slug, name);
     if (!id) return back(reply, "/admin/clients", `O slug "${slug}" já existe.`);
     return back(reply, `/admin/clients/${id}`, "Cliente criado. Gere uma API key para ele.");
   });
@@ -356,7 +406,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     if (!UUID.test(request.params.id)) return notFound(reply, request, "Cliente");
     const label = (request.body.label ?? "").trim().slice(0, 100);
     if (!label) return back(reply, `/admin/clients/${request.params.id}`, "Informe um rótulo para a chave.");
-    const issued = await queries.issueKey(adminOf(request), request.params.id, label);
+    const issued = await queries.issueKey(adminOf(), request.params.id, label);
     if (!issued) return notFound(reply, request, "Cliente");
     return clientPage(request, reply, request.params.id, issued);
   });
@@ -366,7 +416,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     async (request, reply) => {
       const { id, keyId } = request.params;
       if (!UUID.test(id) || !UUID.test(keyId)) return notFound(reply, request, "Chave");
-      const revoked = await queries.revokeKey(adminOf(request), id, keyId);
+      const revoked = await queries.revokeKey(adminOf(), id, keyId);
       return back(reply, `/admin/clients/${id}`, revoked ? "Chave revogada." : "A chave já estava revogada.");
     },
   );
@@ -460,7 +510,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
 
   app.post<{ Params: { id: string } }>("/admin/webhooks/deliveries/:id/resend", async (request, reply) => {
     if (!UUID.test(request.params.id)) return reply.code(404).send("Not found");
-    const done = await queries.resendDelivery(adminOf(request), request.params.id);
+    const done = await queries.resendDelivery(adminOf(), request.params.id);
     return back(reply, "/admin/webhooks", done ? "Entrega colocada para reenvio." : "Essa entrega não pode ser reenviada.");
   });
 
@@ -476,7 +526,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
 
   app.post<{ Params: { id: string } }>("/admin/webhooks/endpoints/:id/pause", async (request, reply) => {
     if (!UUID.test(request.params.id)) return reply.code(404).send("Not found");
-    const done = await queries.pauseEndpoint(adminOf(request), request.params.id);
+    const done = await queries.pauseEndpoint(adminOf(), request.params.id);
     return back(reply, `/admin/webhooks/endpoints/${request.params.id}`,
       done ? "Endpoint pausado. As entregas ficam guardadas até reativar." : "Só um endpoint ativo pode ser pausado.");
   });
@@ -494,7 +544,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
       if (request.body.mode !== "all" && chosen.length === 0) {
         return back(reply, location, "Escolha pelo menos um evento, ou marque \"Todos os eventos\".");
       }
-      const done = await queries.setEndpointEvents(adminOf(request), id, chosen);
+      const done = await queries.setEndpointEvents(adminOf(), id, chosen);
       return back(reply, location, done
         ? "Eventos atualizados."
         : "Os eventos deste endpoint são definidos pela camada de compatibilidade e não podem ser mudados aqui.");
@@ -503,7 +553,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
 
   app.post<{ Params: { id: string } }>("/admin/webhooks/endpoints/:id/reactivate", async (request, reply) => {
     if (!UUID.test(request.params.id)) return reply.code(404).send("Not found");
-    const done = await queries.reactivateEndpoint(adminOf(request), request.params.id);
+    const done = await queries.reactivateEndpoint(adminOf(), request.params.id);
     return back(reply, `/admin/webhooks/endpoints/${request.params.id}`,
       done ? "Endpoint reativado. As entregas que esperavam saem agora." : "O endpoint já estava ativo.");
   });
@@ -515,7 +565,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
   app.setErrorHandler((error, request, reply) => {
     request.log.error({ err: error }, "admin request failed");
     void reply.code(500).type("text/html; charset=utf-8").send(page({
-      title: "Erro", active: "dashboard", user: adminOf(request).name,
+      title: "Erro", active: "dashboard", user: adminOf().name,
       body: html`<p>Algo deu errado. Veja os logs do serviço <span class="mono">admin</span> (request ${request.id}).</p>`,
     }));
   });

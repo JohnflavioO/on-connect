@@ -52,11 +52,12 @@ async function main(): Promise<void> {
     publicBaseUrl: env.PUBLIC_API_BASE_URL,
   });
 
+  const store = createPostgresSessionStore(db);
   const manager = new SessionManager({
-    store: createPostgresSessionStore(db),
+    store,
     redis,
     createAuth: (connectionId) => createRedisAuthState(redis, box, connectionId),
-    createSocket: createBaileysSocketFactory(logger, version, { maxMediaBytes: env.MEDIA_MAX_BYTES }),
+    createSocket: createBaileysSocketFactory(logger, version, { maxMediaBytes: env.MEDIA_MAX_BYTES, behavior: store }),
     logger,
     maxSessions: env.SESSIONS_MAX,
     media,

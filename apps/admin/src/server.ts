@@ -5,12 +5,13 @@ import {
   createSessionGateway,
   loadAdminEnv,
 } from "@on-connect/core";
+import { createAdminAuth } from "./admin-auth.js";
 import { buildAdminApp } from "./app.js";
 import { createAdminQueries } from "./queries.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
-/** Super-admin panel. Reached only through Caddy (password + proxy secret). */
+/** Super-admin panel. Reached only through Caddy. */
 async function main(): Promise<void> {
   const env = loadAdminEnv();
   const logger = createLogger({ level: env.LOG_LEVEL, service: "admin" });
@@ -23,6 +24,7 @@ async function main(): Promise<void> {
   const app = await buildAdminApp({
     queries: createAdminQueries(db, env.API_KEY_PEPPER),
     sessions,
+    auth: createAdminAuth({ username: env.ADMIN_USER, passwordHash: env.ADMIN_PASSWORD_HASH, store: redis }),
     proxySecret: env.ADMIN_PROXY_SECRET,
     origin: env.ADMIN_ORIGIN,
     logLevel: env.LOG_LEVEL,

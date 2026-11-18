@@ -18,17 +18,13 @@
 	@health path /health /health/*
 	respond @health 404
 
-	# Super-admin panel: Caddy asks for the admin password (bcrypt hash in
-	# deploy/.env), then forwards with a secret the panel requires, so it
-	# cannot be reached around this check. header_up replaces any value a
-	# client sends for these headers.
-	handle /admin* {
-		basic_auth {
-			{$ADMIN_USER} {$ADMIN_PASSWORD_HASH}
-		}
+	# Public site and console. The console handles credentials and sessions.
+	@console path / /assets/on-connect.css /admin /admin/*
+	handle @console {
 		reverse_proxy admin:8081 {
 			header_up X-OnConnect-Admin-Secret {$ADMIN_PROXY_SECRET}
-			header_up X-OnConnect-Admin-User {http.auth.user.id}
+			header_up X-OnConnect-Login-IP {http.request.remote.host}
+			header_up -X-OnConnect-Admin-User
 		}
 	}
 
@@ -37,9 +33,10 @@
 			health_uri /health/ready
 			health_interval 10s
 			health_timeout 3s
-			# Only the admin route may carry these.
+			# Only the console routes may carry these.
 			header_up -X-OnConnect-Admin-Secret
 			header_up -X-OnConnect-Admin-User
+			header_up -X-OnConnect-Login-IP
 		}
 	}
 
@@ -51,6 +48,8 @@
 			fields {
 				request>uri regexp ^/media/[^/?#]+ /media/[REDACTED]
 				request>headers>Authorization delete
+				request>headers>Cookie delete
+				resp_headers>Set-Cookie delete
 			}
 		}
 	}

@@ -238,6 +238,7 @@ main {
   color: #525a66;
   margin: 0 10px;
 }
+.top-actions { display: flex; align-items: center; gap: 10px; }
 .console-badge {
   display: flex;
   align-items: center;

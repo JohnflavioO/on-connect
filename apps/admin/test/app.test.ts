@@ -1,5 +1,7 @@
+import { hashSync } from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createAdminAuth } from "../src/admin-auth.js";
 import { buildAdminApp } from "../src/app.js";
 import { escapeHtml, formatPhone, maskUrl } from "../src/html.js";
 import { ago, evaluateHealth } from "../src/monitoring.js";
@@ -7,6 +9,8 @@ import type { AdminQueries, MonitoringTotals } from "../src/queries.js";
 
 const SECRET = "proxy-secret-proxy-secret-proxy-secret";
 const ORIGIN = "https://onconnect.example.com";
+const PASSWORD = "local-test-password";
+const HASH = hashSync(PASSWORD, 4);
 const CONN = "11111111-1111-4111-8111-111111111111";
 const CLIENT = "22222222-2222-4222-8222-222222222222";
 const KEY = "33333333-3333-4333-8333-333333333333";
@@ -16,7 +20,7 @@ const connection = {
   id: CONN, session_key: "tendi-org-1", status: "connecting", status_reason: "waiting_for_scan",
   status_changed_at: new Date("2026-11-17T12:00:00Z"), display_phone_number: "5585999132494",
   verified_name: "<b>Loja</b>", tenant: "tendi-org-1", client_slug: "tendi", client_id: CLIENT,
-  provider: "whatsapp_web", sent7: "3", received7: "5", label: null, created_at: new Date(),
+  provider: "whatsapp_web", reject_calls: true, read_on_reply: false, sent7: "3", received7: "5", label: null, created_at: new Date(),
 };
 
 function fakeQueries() {
@@ -58,6 +62,7 @@ function fakeQueries() {
       last_error: null, updated_at: new Date("2026-11-17T12:01:00Z"),
     }]),
     deleteConnection: vi.fn(async () => true),
+    updateConnectionBehavior: vi.fn(async () => true),
     webhookEndpoint: vi.fn(async (id: string) => id === KEY || id === NATIVE
       ? {
           id, client_id: CLIENT, client_slug: "tendi", tenant: null,
@@ -96,12 +101,36 @@ let queries = fakeQueries();
 const sessions = { start: vi.fn(async () => undefined), logout: vi.fn(async () => undefined),
   currentQr: vi.fn(async (): Promise<string | null> => "2@qr") };
 
-async function start() {
+const proxyHeaders = { "x-onconnect-admin-secret": SECRET };
+let viaCaddy = { ...proxyHeaders, cookie: "" };
+
+async function start(signedIn = true) {
   queries = fakeQueries();
+  const keys = new Map<string, string>();
+  const attempts = new Map<string, number>();
+  const auth = createAdminAuth({
+    username: "john", passwordHash: HASH,
+    store: {
+      get: async (key) => keys.get(key) ?? null,
+      set: async (key, value) => { keys.set(key, value); },
+      del: async (key) => Number(keys.delete(key)),
+      eval: async (_script, _keyCount, key = "") => {
+        const count = (attempts.get(key) ?? 0) + 1;
+        attempts.set(key, count);
+        return count;
+      },
+    },
+  });
   app = await buildAdminApp({
-    queries, sessions,
+    queries, sessions, auth,
     proxySecret: SECRET, origin: ORIGIN, logLevel: "silent",
   });
+  viaCaddy = { ...proxyHeaders, cookie: "" };
+  if (signedIn) {
+    const result = await auth.signIn("fixture", "john", PASSWORD);
+    if (result.status !== "ok") throw new Error("Could not sign in test fixture");
+    viaCaddy.cookie = result.cookie.split(";")[0] ?? "";
+  }
   return app;
 }
 
@@ -111,7 +140,6 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-const viaCaddy = { "x-onconnect-admin-secret": SECRET, "x-onconnect-admin-user": "john" };
 /** `origin: null` sends no Origin header at all. */
 const post = (instance: FastifyInstance, url: string, body = "", origin: string | null = ORIGIN) =>
   instance.inject({
@@ -147,6 +175,62 @@ describe("access guard", () => {
     expect(response.headers["x-frame-options"]).toBe("DENY");
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.headers["referrer-policy"]).toBe("same-origin");
+  });
+});
+
+describe("public site and admin sign-in", () => {
+  it("links the landing page to a branded login and protects private routes", async () => {
+    const instance = await start(false);
+    const home = await instance.inject({ url: "/", headers: proxyHeaders });
+    expect(home.statusCode).toBe(200);
+    expect(home.body).toContain('href="/admin/login"');
+    expect(home.body).toContain('src="/admin/assets/logo.png"');
+    const login = await instance.inject({ url: "/admin/login", headers: proxyHeaders });
+    expect(login.body).toContain('autocomplete="current-password"');
+    expect(login.body).toContain('src="/admin/assets/logo.png"');
+    for (const path of ["/admin/assets/logo.png", "/admin/assets/icon.png", "/admin/assets/favicon.svg"]) {
+      expect((await instance.inject({ url: path, headers: proxyHeaders })).statusCode).toBe(200);
+    }
+    const protectedRoute = await instance.inject({
+      url: "/admin", headers: { ...proxyHeaders, "x-onconnect-admin-user": "john" },
+    });
+    expect(protectedRoute.statusCode).toBe(303);
+    expect(protectedRoute.headers.location).toBe("/admin/login");
+    expect((await post(instance, "/admin/logout")).statusCode).toBe(401);
+    expect(queries.dashboard).not.toHaveBeenCalled();
+  });
+
+  it("authenticates the existing credential and revokes the session on logout", async () => {
+    const instance = await start(false);
+    const credentials = `username=john&password=${PASSWORD}`;
+    expect((await post(instance, "/admin/login", credentials, "https://evil.example")).statusCode).toBe(403);
+    const wrong = await post(instance, "/admin/login", "username=john&password=wrong");
+    expect(wrong.statusCode).toBe(401);
+    expect(wrong.body).toContain("Usuário ou senha inválidos.");
+    expect(wrong.headers["set-cookie"]).toBeUndefined();
+
+    const signedIn = await post(instance, "/admin/login", credentials);
+    expect(signedIn.statusCode).toBe(303);
+    expect(signedIn.headers.location).toBe("/admin");
+    const cookie = String(signedIn.headers["set-cookie"]);
+    expect(cookie).toMatch(/^__Host-onconnect_admin=.+; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=28800$/);
+    viaCaddy.cookie = cookie.split(";")[0] ?? "";
+    expect((await instance.inject({ url: "/admin", headers: viaCaddy })).statusCode).toBe(200);
+
+    const signedOut = await post(instance, "/admin/logout");
+    expect(signedOut.headers.location).toBe("/admin/login");
+    expect(signedOut.headers["set-cookie"]).toContain("Max-Age=0");
+    expect((await instance.inject({ url: "/admin", headers: viaCaddy })).statusCode).toBe(303);
+  });
+
+  it("limits repeated invalid credentials", async () => {
+    const instance = await start(false);
+    for (let attempt = 0; attempt < 10; attempt++) {
+      expect((await post(instance, "/admin/login", "username=john&password=wrong")).statusCode).toBe(401);
+    }
+    const limited = await post(instance, "/admin/login", `username=john&password=${PASSWORD}`);
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers["retry-after"]).toBe("60");
   });
 });
 
@@ -343,6 +427,23 @@ describe("connection tabs", () => {
     const instance = await start();
     expect((await get(instance, `/admin/connections/${CONN}?tab=configuracoes`)).body).toContain("Sempre ligado");
     expect((await get(instance, `/admin/connections/${CONN}?tab=nada`)).body).toContain('aria-current="page">Conexão');
+  });
+
+  it("renders saved settings and validates same-origin updates including disabling both", async () => {
+    const instance = await start();
+    const url = `/admin/connections/${CONN}/settings`;
+    const settings = await get(instance, `/admin/connections/${CONN}?tab=configuracoes`);
+    expect(settings.body).toContain('name="rejectCalls" type="checkbox" checked');
+    expect(settings.body).toContain('name="readOnReply" type="checkbox" >');
+
+    expect((await post(instance, url, "readOnReply=on", "https://another.example")).statusCode).toBe(403);
+    expect((await post(instance, url, "readOnReply=invalid")).statusCode).toBe(400);
+    expect(queries.updateConnectionBehavior).not.toHaveBeenCalled();
+
+    expect((await post(instance, url, "readOnReply=on")).headers.location).toContain("?tab=configuracoes&ok=");
+    expect(queries.updateConnectionBehavior).toHaveBeenLastCalledWith({ name: "john" }, CONN, false, true);
+    expect((await post(instance, url)).statusCode).toBe(303);
+    expect(queries.updateConnectionBehavior).toHaveBeenLastCalledWith({ name: "john" }, CONN, false, false);
   });
 
   it("deletes only when EXCLUIR is typed, then logs the number out", async () => {

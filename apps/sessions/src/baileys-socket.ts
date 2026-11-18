@@ -16,6 +16,7 @@ import {
 import type { Logger } from "pino";
 import { toInbound, toStatus, type InboundMessage } from "./message-mapping.js";
 import type { CloseReason, SocketFactory } from "./session-manager.js";
+import { phoneFromJid, type SessionBehaviorStore } from "./store.js";
 
 function closeReason(statusCode: number | undefined): CloseReason {
   switch (statusCode) {
@@ -51,7 +52,7 @@ export async function resolveWaVersion(logger: Logger): Promise<WAVersion | unde
 export function createBaileysSocketFactory(
   logger: Logger,
   version: WAVersion | undefined,
-  options: { maxMediaBytes: number },
+  options: { maxMediaBytes: number; behavior: SessionBehaviorStore },
 ): SocketFactory {
   return (connectionId, auth, handlers) => {
     // The library is chatty at info level and may log message content.
@@ -123,6 +124,23 @@ export function createBaileysSocketFactory(
       if (statuses.length > 0) handlers.onStatus(statuses);
     });
 
+    socket.ev.on("call", (calls) => {
+      const offers = calls.filter((call) => call.status === "offer" && !call.offline);
+      if (offers.length === 0) return;
+      void options.behavior.loadSettings(connectionId).then(async (settings) => {
+        if (!settings?.reject_calls) return;
+        for (const offer of offers) {
+          try {
+            await socket.rejectCall(offer.id, offer.from);
+          } catch {
+            logger.warn({ connectionId }, "could not reject WhatsApp call");
+          }
+        }
+      }).catch(() => {
+        logger.warn({ connectionId }, "could not load call settings");
+      });
+    });
+
     const recipientJid = async (phoneNumber: string): Promise<string> => {
       // WhatsApp may register a different phone JID (e.g. Brazil's ninth
       // digit). Use its answer instead of guessing or rewriting the number.
@@ -131,6 +149,28 @@ export function createBaileysSocketFactory(
       const recipient = contacts.find((contact) => contact.exists && contact.jid);
       if (!recipient) throw new Error("recipient_not_on_whatsapp");
       return recipient.jid;
+    };
+
+    const sendTo = async (jid: string, content: AnyMessageContent, messageId: string): Promise<string> => {
+      const before = new Date();
+      const sent = await socket.sendMessage(jid, content, { messageId });
+      // A receipt failure must never retry a message WhatsApp already accepted.
+      try {
+        const phone = phoneFromJid(jid);
+        if (sent && phone && (await options.behavior.loadSettings(connectionId))?.read_on_reply) {
+          const lid = await socket.signalRepository.lidMapping.getLIDForPN(jid).catch(() => null);
+          const jids = lid ? [jid, lid] : [jid];
+          for (;;) {
+            const keys = await options.behavior.messagesToRead(connectionId, jids, phone, before);
+            if (keys.length === 0) break;
+            await socket.readMessages(keys);
+            await options.behavior.recordReadReceipts(connectionId, keys.map((key) => key.id));
+          }
+        }
+      } catch {
+        logger.warn({ connectionId }, "could not mark previous WhatsApp messages as read");
+      }
+      return sent?.key.id ?? messageId;
     };
 
     return {
@@ -142,8 +182,7 @@ export function createBaileysSocketFactory(
       newMessageId: () => generateMessageIDV2(socket.user?.id),
       async sendText(phoneNumber, text, messageId) {
         const jid = await recipientJid(phoneNumber);
-        const sent = await socket.sendMessage(jid, { text }, { messageId });
-        return sent?.key.id ?? messageId;
+        return sendTo(jid, { text }, messageId);
       },
       async sendMedia(phoneNumber, media, messageId) {
         const jid = await recipientJid(phoneNumber);
@@ -167,8 +206,7 @@ export function createBaileysSocketFactory(
             ...caption,
           };
         }
-        const sent = await socket.sendMessage(jid, content, { messageId });
-        return sent?.key.id ?? messageId;
+        return sendTo(jid, content, messageId);
       },
       async profilePictureUrl(phoneNumber) {
         try {

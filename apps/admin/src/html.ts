@@ -140,6 +140,10 @@ const NAV: Array<[PageOptions["active"], string, string, IconName]> = [
   ["webhooks", "/admin/webhooks", "Webhooks", "webhook"],
 ];
 
+export function brand(href: string, caption?: string): Html {
+  return html`<a class="brand" href="${href}"><img class="brand-logo" src="/admin/assets/logo.png" alt="On Connect API" width="1388" height="331">${caption ? html`<small>${caption}</small>` : ""}</a>`;
+}
+
 export function page(options: PageOptions): string {
   return html`<!doctype html>
 <html lang="pt-BR">
@@ -157,7 +161,7 @@ export function page(options: PageOptions): string {
 <body>
 <a class="skip-link" href="#main-content">Ir para o conteúdo</a>
 <aside class="sidebar">
-  <a class="brand" href="/admin" aria-label="On Connect API · Console"><img class="brand-logo" src="/admin/assets/logo.png" alt="On Connect API" width="1388" height="331"><small>CONSOLE</small></a>
+  ${brand("/admin", "CONSOLE")}
   <div class="nav-caption">PLATAFORMA</div>
   <nav aria-label="Navegação principal">
     ${NAV.map(([key, href, label, symbol]) =>
@@ -167,7 +171,9 @@ export function page(options: PageOptions): string {
   <div class="who"><span class="avatar">${(options.user ?? "A").slice(0, 1).toUpperCase()}</span><div><strong>${options.user ?? "Administrador"}</strong><small>Super admin</small></div></div></div>
 </aside>
 <main id="main-content">
-  <header class="top"><div class="breadcrumb">Console <span>/</span> ${options.active === "dashboard" ? "Visão geral" : options.title}</div><span class="console-badge">${icon("shield")} Super admin</span></header>
+  <header class="top"><div class="breadcrumb">Console <span>/</span> ${options.active === "dashboard" ? "Visão geral" : options.title}</div><div class="top-actions"><span class="console-badge">${icon("shield")} Super admin</span>
+    <form method="post" action="/admin/logout"><button type="submit" class="button compact">Sair</button></form></div>
+  </header>
   <div class="page-heading"><div><p class="eyebrow">ON CONNECT</p><h1>${options.title}</h1></div><span class="updated-at">Atualizado em ${formatDate(new Date())}</span></div>
   ${options.notice ? html`<div class="notice">${options.notice}</div>` : ""}
   ${options.body}

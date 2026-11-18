@@ -158,9 +158,34 @@ describe.skipIf(!enabled)("sessions store as onconnect_system (PostgreSQL 17)", 
     expect(await outbound.stalePending(3600)).not.toContain(OUT);
   });
 
+  it("finds unacknowledged inbound messages for the recipient and records receipts", async () => {
+    const phone = "5511999999999";
+    const jid = `${phone}@s.whatsapp.net`;
+    const lid = "123456789@lid";
+    const cutoff = new Date("2100-01-01T00:00:00Z");
+    expect(await sessions.loadSettings(CONN)).toEqual({ reject_calls: false, read_on_reply: false });
+    expect(await sessions.messagesToRead(CONN, [jid, lid], phone, cutoff)).toEqual([]);
+
+    await sql("UPDATE onconnect.connections SET reject_calls = true, read_on_reply = true WHERE id = $1", [CONN]);
+    await sessions.recordInbound(CONN, { ...inbound("READ-LID"), jid: lid, counterpart: "123456789", counterpartIsPhone: false });
+    await sessions.recordInbound(CONN, {
+      ...inbound("OTHER"), jid: `${phone}@lid`, counterpartIsPhone: false,
+    });
+
+    expect(await sessions.loadSettings(CONN)).toEqual({ reject_calls: true, read_on_reply: true });
+    expect(await sessions.messagesToRead(CONN, [jid, lid], phone, new Date(0))).toEqual([]);
+    expect(await sessions.messagesToRead(CONN, [jid, lid], phone, cutoff)).toEqual([
+      { id: "READ-LID", remoteJid: lid },
+      { id: "IN-1", remoteJid: jid },
+    ]);
+    await sessions.recordReadReceipts(CONN, ["READ-LID", "IN-1"]);
+    expect(await sessions.messagesToRead(CONN, [jid, lid], phone, cutoff)).toEqual([]);
+  });
+
   it("ignores events for a retired connection", async () => {
     await sql("UPDATE onconnect.connections SET deleted_at = now() WHERE id = $1", [CONN]);
     expect(await sessions.recordInbound(CONN, inbound("IN-2"))).toBe(false);
+    expect(await sessions.loadSettings(CONN)).toBeNull();
     await sessions.setStatus(CONN, "error", "should_not_apply");
     const [row] = await sql<{ status_reason: string | null }>(
       "SELECT status_reason FROM onconnect.connections WHERE id = $1", [CONN]);
