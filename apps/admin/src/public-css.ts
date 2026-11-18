@@ -29,13 +29,56 @@ export const PUBLIC_CSS = `
 .public-primary:hover { background: #76e7da; }
 .public-primary .icon, .public-secondary .icon { width: 16px; height: 16px; }
 .hero-band {
-  background: radial-gradient(ellipse at 15% 0%, #163831 0%, transparent 65%),
-    linear-gradient(125deg, #101214 55%, #161d25);
+  position: relative; isolation: isolate; overflow: hidden;
+  background: radial-gradient(ellipse at 78% 44%, #164139 0%, transparent 58%),
+    radial-gradient(ellipse at 12% 0%, #16332c 0%, transparent 56%), #101517;
+}
+.hero-band::before {
+  content: ""; position: absolute; z-index: -1; inset: 0; pointer-events: none;
+  background-image: radial-gradient(#86e1c65c 1px, transparent 1.5px),
+    linear-gradient(90deg, #81dfc516 1px, transparent 1px),
+    linear-gradient(#81dfc516 1px, transparent 1px);
+  background-size: 32px 32px, 64px 64px, 64px 64px;
+  background-position: -1px -1px, 0 0, 0 0;
+  mask-image: radial-gradient(ellipse at 76% 47%, #000 14%, #0009 50%, transparent 83%);
 }
 .public-hero {
-  display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
-  gap: clamp(28px, 6vw, 84px); align-items: center; padding-block: clamp(64px, 9vw, 124px);
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: clamp(22px, 5vw, 68px); align-items: center; padding-block: clamp(54px, 7vw, 96px);
 }
+.hero-flow { min-width: 0; position: relative; }
+.hero-route {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  position: relative; isolation: isolate; margin: 0 0 16px; padding: 0; list-style: none;
+}
+.hero-route::before {
+  content: ""; position: absolute; z-index: -1; inset: 19px 16.7% auto;
+  border-top: 1px dashed #71c7aa;
+}
+.hero-route li {
+  display: grid; justify-items: center; gap: 6px; color: #c7ded6;
+  font-size: 11px; font-weight: 650; text-align: center;
+}
+.hero-route li > span, .conversation-icon {
+  display: grid; place-items: center; width: 38px; height: 38px;
+  background: #142724; border: 1px solid #416e60; border-radius: 10px; color: #a0e9bd;
+}
+.hero-route li:nth-child(2) > span { border-color: #7dcba6; box-shadow: 0 0 24px #6feaab3d; }
+.hero-route img { width: 17px; height: auto; }
+.hero-conversation {
+  position: relative; display: flex; align-items: center; gap: 12px; width: fit-content;
+  max-width: 100%; margin: 14px 0 0 auto; padding: 10px 15px 10px 10px;
+  border: 1px solid #34554c; border-radius: 14px 14px 4px 14px;
+  background: #1a302a; box-shadow: 0 12px 30px #0003;
+}
+.hero-conversation::before {
+  content: ""; position: absolute; border-left: 1px solid #71c7aa;
+  height: 15px; bottom: 100%; right: 20px;
+}
+.conversation-icon { flex: none; width: 32px; height: 32px; }
+.conversation-icon .icon { width: 16px; }
+.hero-conversation div > span { font-size: 11px; color: #add1c4; }
+.hero-conversation p { margin: 1px 0 0; color: #e5f2ed; font-size: 13px; }
 .public-kicker {
   margin: 0 0 16px; color: var(--accent); font-weight: 700;
   letter-spacing: .13em; text-transform: uppercase; font-size: 11px;
@@ -49,12 +92,12 @@ export const PUBLIC_CSS = `
   max-width: 420px; margin: 22px 0 0; color: #abb4be; font-size: clamp(16px, 2vw, 19px); line-height: 1.55;
 }
 .public-actions { display: flex; flex-wrap: wrap; gap: 15px 22px; align-items: center; margin-top: 30px; }
-.public-copy h1 { font-size: clamp(42px, 6vw, 77px); }
+.public-copy h1 { font-size: clamp(36px, 5.15vw, 70px); text-wrap: initial; }
 .public-copy h1 em { display: block; color: #a0e9bd; }
 .public-copy > p:not(.public-kicker) { max-width: 490px; }
 .api-preview {
   margin: 0; min-width: 0; border: 1px solid #407364; border-radius: 18px;
-  background: #131b20; box-shadow: 0 22px 64px #0005; overflow: hidden;
+  background: #111c20; box-shadow: 0 20px 55px #0006, 0 0 36px #76f3b118; overflow: hidden;
 }
 .api-preview figcaption, .api-response {
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
@@ -65,7 +108,7 @@ export const PUBLIC_CSS = `
 .api-preview figcaption .icon { width: 16px; color: var(--accent); }
 .api-preview figcaption code, .api-response span { font-size: 12px; color: #b2c2c8; }
 .api-preview pre {
-  margin: 0; padding: 23px clamp(13px, 2vw, 23px); overflow: auto;
+  margin: 0; padding: 18px clamp(13px, 2vw, 23px); overflow: auto;
   font-size: clamp(11px, 1.2vw, 14px); line-height: 1.75; color: #e2ebed;
 }
 .api-preview pre:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
@@ -122,10 +165,18 @@ export const PUBLIC_CSS = `
 .public-steps li { padding-inline-start: 4px; }
 .public-steps li::marker { color: var(--accent); font-weight: 700; }
 .public-steps h3 { margin: 0 0 6px; font-size: 17px; }
-.public-plan { display: grid; grid-template-columns: 1fr minmax(290px, 430px); gap: 24px 40px; align-items: center; }
+.public-plan {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, 470px);
+  gap: 24px clamp(24px, 6vw, 80px); align-items: center;
+}
+.public-plan .section-intro h2 { font-size: clamp(29px, 4vw, 46px); }
+.public-plan .section-intro p { max-width: 440px; font-size: 16px; }
+.plan-docs { margin-top: 20px; }
 .plan-card {
-  border: 1px solid #36514c; border-radius: 18px; padding: clamp(20px, 4vw, 34px);
-  background: radial-gradient(ellipse at top right, #213a35, transparent 80%), var(--panel);
+  border: 1px solid #416e60; border-radius: 20px; padding: clamp(20px, 4vw, 34px);
+  background: radial-gradient(ellipse at top right, #2a5043, transparent 78%),
+    radial-gradient(#79cfb12e 1px, transparent 1.5px) top right / 16px 16px, #182222;
+  box-shadow: 0 16px 42px #0003;
 }
 .plan-price { margin: 0; font-size: clamp(37px, 7vw, 60px); line-height: 1; letter-spacing: -.06em; font-weight: 730; }
 .plan-price span { color: var(--accent); font-size: .48em; letter-spacing: 0; }
@@ -186,7 +237,8 @@ export const PUBLIC_CSS = `
 @media (max-width: 760px) {
   .public-container, .public-site .login-layout { width: calc(100% - 32px); }
   .public-hero, .public-site .login-layout { grid-template-columns: minmax(0, 1fr); }
-  .public-hero { padding-block: 43px; }
+  .public-hero { padding-block: 42px; gap: 36px; }
+  .hero-band::before { mask-image: radial-gradient(ellipse at 72% 72%, #000 5%, transparent 76%); }
   .public-site .login-layout { align-content: start; padding-block: 42px; }
   .login-info h1 br { display: none; }
   .login-icons { display: none; }
