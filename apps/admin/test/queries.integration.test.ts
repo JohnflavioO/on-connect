@@ -356,7 +356,9 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
       "INSERT INTO onconnect.tenants (client_id, external_id, name, max_connections) VALUES ($1, 'meta-loja', 'Meta', 1)",
       [CLIENT],
     );
-    const input = { clientId: CLIENT, tenantExternalId: "meta-loja", phoneNumberId: "106540352242922",
+    // Its own phone number id: every package shares one database in CI, and the
+    // sessions tests already hold 106540352242922 in a live connection.
+    const input = { clientId: CLIENT, tenantExternalId: "meta-loja", phoneNumberId: "106540352299001",
       wabaId: "200000000000001", label: "Oficial" };
     const created = await queries.createMetaConnection(admin, input);
     expect(created).toHaveProperty("id");
@@ -364,7 +366,7 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
     const [row] = await sql<Record<string, unknown>>(
       "SELECT provider, status, status_reason, phone_number_id, waba_id, label FROM onconnect.connections WHERE id = $1", [id]);
     expect(row).toEqual({ provider: "meta_cloud", status: "connecting", status_reason: "checking_meta",
-      phone_number_id: "106540352242922", waba_id: "200000000000001", label: "Oficial" });
+      phone_number_id: "106540352299001", waba_id: "200000000000001", label: "Oficial" });
     const [audit] = await sql<{ actor_id: string; provider: string }>(
       `SELECT actor_id, metadata ->> 'provider' AS provider FROM onconnect.audit_log
         WHERE action = 'connection.created' AND target_id = $1`, [id]);
@@ -377,6 +379,6 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
     await sql("UPDATE onconnect.tenants SET max_connections = 5 WHERE client_id = $1 AND external_id = 'meta-loja'", [CLIENT]);
     expect(await queries.createMetaConnection(admin, input)).toEqual({ error: "number_in_use" });
     const one = await queries.connection(id);
-    expect(one).toMatchObject({ provider: "meta_cloud", phone_number_id: "106540352242922", quality_rating: null });
+    expect(one).toMatchObject({ provider: "meta_cloud", phone_number_id: "106540352299001", quality_rating: null });
   });
 });
