@@ -112,16 +112,20 @@ summary:focus-visible {
 }
 .brand {
   display: flex;
-  align-items: center;
-  gap: 11px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
   color: var(--text);
-  font-weight: 700;
-  font-size: 18px;
-  letter-spacing: -0.6px;
-  padding: 0 10px 36px;
+  padding: 0 10px 32px;
 }
 .brand:hover {
   text-decoration: none;
+}
+.brand-logo {
+  display: block;
+  width: 100%;
+  max-width: 172px;
+  height: auto;
 }
 .brand small {
   display: block;
@@ -129,21 +133,7 @@ summary:focus-visible {
   letter-spacing: 2.8px;
   color: var(--muted);
   font-weight: 500;
-  margin-top: 1px;
-}
-.logo {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 11px;
-  background: var(--accent);
-  color: #10241e;
-  box-shadow: 0 0 24px #49d6c519;
-}
-.logo .icon {
-  width: 23px;
-  height: 23px;
+  padding-left: 2px;
 }
 .nav-caption {
   font-size: 9px;
@@ -1270,13 +1260,8 @@ tr:hover td {
     width: 184px;
   }
   .brand {
-    font-size: 16px;
-    gap: 8px;
     padding-left: 5px;
-  }
-  .logo {
-    width: 30px;
-    height: 30px;
+    padding-right: 5px;
   }
   .brand small {
     font-size: 8px;
@@ -1313,17 +1298,18 @@ tr:hover td {
     border-bottom: 1px solid var(--line);
   }
   .brand {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
     padding: 0 0 17px;
   }
+  .brand-logo {
+    width: auto;
+    height: 30px;
+  }
   .brand small {
-    display: inline-block;
-    margin-left: 10px;
     font-size: 8px;
     letter-spacing: 2px;
-  }
-  .brand > span:last-child {
-    display: flex;
-    align-items: center;
   }
   .nav-caption,
   .sidebar-bottom {
