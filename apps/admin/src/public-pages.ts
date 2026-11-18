@@ -23,16 +23,19 @@ ${body}
 }
 
 const features: Array<{ symbol: IconName; title: string; body: string }> = [
-  { symbol: "connection", title: "Conexões", body: "Vincule números por QR Code e acompanhe o estado de cada sessão no painel." },
-  { symbol: "send", title: "Mensagens", body: "Envie textos e mídias do seu sistema e receba atualizações de entrega e leitura." },
-  { symbol: "webhook", title: "Webhooks", body: "Receba eventos no seu sistema e acompanhe as tentativas de entrega no console." },
+  { symbol: "connection", title: "Conexões", body: "Vincule seu número por QR Code ou código de pareamento. Veja no painel se a sessão está conectada e consulte o histórico de status." },
+  { symbol: "send", title: "Mensagens", body: "Envie textos, imagens, vídeos, áudios e documentos por API. Acompanhe status como enviado, entregue, lido ou com falha." },
+  { symbol: "webhook", title: "Webhooks", body: "Receba mensagens e mudanças de status em um endpoint do seu sistema. Consulte tentativas, erros e reenvios pelo console." },
 ];
 
 export function landingPage(): string {
   return document("On Connect · Integração WhatsApp", html`
 <header class="public-header"><div class="public-container public-bar">
   ${brand("/")}
-  <a class="public-secondary" href="/admin/login">Acessar console ${icon("arrow")}</a>
+  <nav class="public-nav public-header-nav" aria-label="Navegação principal">
+    <a href="#recursos">Recursos</a><a href="#como-funciona">Como funciona</a><a href="#plano">Plano</a>
+  </nav>
+  <a class="public-secondary" href="/admin/login">Acessar conta ${icon("arrow")}</a>
 </div></header>
 <main id="main-content" class="public-main">
   <section class="public-container public-hero">
@@ -41,7 +44,7 @@ export function landingPage(): string {
       <h1>Conecte o WhatsApp <em>ao seu sistema.</em></h1>
       <p>Integre mensagens e eventos de WhatsApp ao seu produto. Gerencie números, sessões e webhooks em um só console.</p>
       <div class="public-actions">
-        <a class="public-primary" href="/admin/login">Acessar console ${icon("arrow")}</a>
+        <a class="public-primary" href="#plano">Ver plano ${icon("arrow")}</a>
         <a class="public-feature-link" href="#recursos">Conhecer recursos</a>
       </div>
     </div>
@@ -63,10 +66,46 @@ export function landingPage(): string {
         <article class="public-feature"><span class="public-symbol">${icon(symbol)}</span><h3>${title}</h3><p>${body}</p></article>`)}
     </div>
   </section>
+  <section class="public-container public-setup" id="como-funciona" aria-labelledby="setup-title">
+    <div class="section-intro">
+      <h2 id="setup-title">Do número conectado à primeira mensagem</h2>
+      <p>Integre o WhatsApp ao seu CRM, sistema de atendimento ou fluxo de notificações.</p>
+    </div>
+    <ol class="public-steps">
+      <li><h3>Conecte o número</h3><p>Vincule sua conta do WhatsApp por QR Code ou código de pareamento.</p></li>
+      <li><h3>Integre seu sistema</h3><p>Use uma chave de API para enviar mensagens e configure uma URL para receber eventos assinados.</p></li>
+      <li><h3>Acompanhe a operação</h3><p>Consulte o status das conexões e investigue falhas de entrega dos webhooks no painel.</p></li>
+    </ol>
+  </section>
+  <section class="public-container public-plan" id="plano" aria-labelledby="plan-title">
+    <div class="section-intro">
+      <h2 id="plan-title">Plano On Connect</h2>
+      <p>Para equipes que querem enviar mensagens e receber eventos de WhatsApp diretamente no sistema que já usam.</p>
+    </div>
+    <div class="plan-card">
+      <p class="plan-price"><span>R$</span> 37,49</p>
+      <ul>
+        <li>${icon("check")} Conexão via WhatsApp Web</li>
+        <li>${icon("check")} API para envio de texto e mídia</li>
+        <li>${icon("check")} Webhooks assinados de mensagens e status</li>
+        <li>${icon("check")} Painel de conexões e entregas</li>
+      </ul>
+    </div>
+  </section>
 </main>
-<footer class="public-footer"><div class="public-container public-bar">
-  ${brand("/")} <a class="public-feature-link" href="/admin/login">Entrar no console</a>
-</div></footer>`);
+<footer class="public-footer">
+  <div class="public-container footer-content">
+    <div class="footer-brand">
+      ${brand("/")}
+      <p>API de conectividade WhatsApp para integrar mensagens e eventos ao seu sistema.</p>
+    </div>
+    <nav class="public-nav footer-nav" aria-label="Links do rodapé">
+      <a href="#recursos">Recursos</a><a href="#como-funciona">Como funciona</a>
+      <a href="#plano">Plano</a><a href="/admin/login">Acessar conta</a>
+    </nav>
+  </div>
+  <div class="public-container footer-meta">© ${new Date().getUTCFullYear()} On Connect</div>
+</footer>`);
 }
 
 export function loginPage(error?: string): string {

@@ -12,6 +12,9 @@ export const PUBLIC_CSS = `
 .public-bar .brand-logo { width: clamp(120px, 18vw, 158px); height: auto; }
 .public-bar .brand small { margin-inline-start: 0; }
 .public-site .public-main { width: 100%; max-width: none; padding: 0; flex: 1; min-width: 0; }
+.public-nav { display: flex; flex-flow: row wrap; align-items: center; gap: 10px 22px; }
+.public-nav a { padding: 4px 0; color: var(--muted); font-weight: 600; }
+.public-nav a:hover { color: var(--accent); }
 .public-bar a, .public-actions a, .public-primary { text-decoration: none; }
 .public-secondary, .public-primary {
   align-items: center; display: inline-flex; justify-content: center; gap: 10px;
@@ -66,7 +69,7 @@ export const PUBLIC_CSS = `
 .diagram-event::before { content: ""; position: absolute; left: 50%; bottom: 100%; height: 25px; border-left: 1px dashed #619e91; }
 .diagram-event .icon { width: 15px; height: 15px; }
 .public-features { padding-block: 38px 64px; border-top: 1px solid var(--line); }
-.public-features h2, .login-card h2 { margin: 0 0 23px; font-size: clamp(23px, 3vw, 33px); letter-spacing: -.035em; line-height: 1.15; }
+.public-features h2, .section-intro h2, .login-card h2 { margin: 0 0 23px; font-size: clamp(23px, 3vw, 33px); letter-spacing: -.035em; line-height: 1.15; }
 .public-feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .public-feature { padding: 21px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
 .public-symbol {
@@ -76,7 +79,35 @@ export const PUBLIC_CSS = `
 .public-feature h3 { margin: 13px 0 4px; font-size: 18px; }
 .public-feature p, .login-card p { margin: 0; color: #aab4bd; line-height: 1.55; }
 .public-footer { border-block-start: 1px solid var(--line); border-block-end: 0; }
-.public-footer .public-bar { min-height: 70px; }
+.public-setup, .public-plan { padding-block: clamp(35px, 6vw, 68px); border-block-start: 1px solid var(--line); }
+.section-intro { max-width: 500px; }
+.section-intro h2 { margin-bottom: 12px; }
+.section-intro p, .public-steps p, .footer-brand p { margin: 0; color: #aab4bd; line-height: 1.6; }
+.public-steps {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 30px;
+  margin: 26px 0 0; padding-inline-start: 28px;
+}
+.public-steps li { padding-inline-start: 4px; }
+.public-steps li::marker { color: var(--accent); font-weight: 700; }
+.public-steps h3 { margin: 0 0 6px; font-size: 17px; }
+.public-plan { display: grid; grid-template-columns: 1fr minmax(290px, 430px); gap: 24px 40px; align-items: center; }
+.plan-card {
+  border: 1px solid #36514c; border-radius: 18px; padding: clamp(20px, 4vw, 34px);
+  background: radial-gradient(ellipse at top right, #213a35, transparent 80%), var(--panel);
+}
+.plan-price { margin: 0; font-size: clamp(37px, 7vw, 60px); line-height: 1; letter-spacing: -.06em; font-weight: 730; }
+.plan-price span { color: var(--accent); font-size: .48em; letter-spacing: 0; }
+.plan-card ul { list-style: none; margin: 22px 0 0; padding: 18px 0 0; border-top: 1px solid #36514c; }
+.plan-card li { display: flex; align-items: start; gap: 9px; padding-block: 5px; }
+.plan-card .icon { color: var(--accent); }
+.footer-content {
+  display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap;
+  gap: 20px 34px; padding-block: 28px;
+}
+.footer-brand .brand { padding: 0; }
+.footer-brand .brand-logo { width: 136px; height: auto; }
+.footer-brand p { margin-top: 10px; max-width: 360px; }
+.footer-meta { border-top: 1px solid var(--line); padding-block: 12px 20px; color: var(--muted); font-size: 12px; }
 .public-site .login-layout {
   display: grid; grid-template-columns: 1fr minmax(320px, 440px);
   align-items: center; gap: clamp(24px, 7vw, 120px);
@@ -105,6 +136,7 @@ export const PUBLIC_CSS = `
   .login-info h1 br { display: none; }
   .login-icons { display: none; }
   .public-diagram { min-height: 245px; }
-  .public-feature-grid { grid-template-columns: minmax(0, 1fr); }
+  .public-feature-grid, .public-steps, .public-plan { grid-template-columns: minmax(0, 1fr); }
+  .public-header-nav { display: none; }
 }
 `;
