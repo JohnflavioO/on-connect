@@ -58,6 +58,8 @@ const ICON_PATHS = {
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
   alert: '<path d="m12 3 10 18H2L12 3Zm0 6v5m0 3h.01"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
+  message: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;
@@ -126,15 +128,44 @@ export function badge(status: string): Html {
 
 export interface PageOptions {
   title: string;
-  active: "dashboard" | "monitoring" | "connections" | "clients" | "webhooks";
+  active: "dashboard" | "monitoring" | "messages" | "connections" | "clients" | "webhooks" | "search";
   user: string | null;
   notice?: string | null;
   body: Html;
+  /** Alerts of the last 24 h for the bell; null when they could not be read. */
+  alerts?: PageAlert[] | null;
+  /** The term in the top search box (search page only). */
+  search?: string;
+}
+
+export interface PageAlert {
+  tone: "warn" | "bad";
+  text: string;
+  href: string;
+}
+
+/** The bell in the top bar: a count, and the list in a dropdown (no script needed). */
+function alertsMenu(alerts: PageAlert[] | null | undefined): Html {
+  if (alerts === undefined) return html``;
+  const worst = alerts?.some((a) => a.tone === "bad") ? "bad" : alerts?.length ? "warn" : "ok";
+  const label = alerts === null ? "Alertas indisponíveis"
+    : alerts.length === 0 ? "Nenhum alerta" : `${alerts.length} ${alerts.length === 1 ? "alerta" : "alertas"}`;
+  return html`<details class="alerts-menu" data-dropdown>
+    <summary aria-label="${label}" title="${label}">${icon("bell")}${alerts?.length ? html`<span class="alerts-count ${worst}">${alerts.length > 9 ? "9+" : alerts.length}</span>` : ""}</summary>
+    <div class="alerts-panel" role="region" aria-label="Alertas">
+      <div class="alerts-head"><strong>Alertas</strong><span>últimas 24 h</span></div>
+      ${alerts === null ? html`<p class="alerts-empty">Não foi possível ler os alertas agora.</p>`
+        : alerts.length === 0 ? html`<p class="alerts-empty">${icon("check")} Nada para revisar.</p>`
+        : html`<ul>${alerts.map((a) => html`<li><a class="${a.tone}" href="${a.href}">${icon("alert")}<span>${a.text}</span></a></li>`)}</ul>`}
+      <a class="alerts-foot" href="/admin/monitoring">Abrir monitoramento ${icon("arrow")}</a>
+    </div>
+  </details>`;
 }
 
 const NAV: Array<[PageOptions["active"], string, string, IconName]> = [
   ["dashboard", "/admin", "Visão geral", "grid"],
   ["monitoring", "/admin/monitoring", "Monitoramento", "activity"],
+  ["messages", "/admin/messages", "Mensagens", "message"],
   ["connections", "/admin/connections", "Conexões", "connection"],
   ["clients", "/admin/clients", "Clientes", "users"],
   ["webhooks", "/admin/webhooks", "Webhooks", "webhook"],
@@ -167,7 +198,9 @@ export function page(options: PageOptions): string {
   <div class="who"><span class="avatar">${(options.user ?? "A").slice(0, 1).toUpperCase()}</span><div><strong>${options.user ?? "Administrador"}</strong><small>Super admin</small></div></div></div>
 </aside>
 <main id="main-content">
-  <header class="top"><div class="breadcrumb">Console <span>/</span> ${options.active === "dashboard" ? "Visão geral" : options.title}</div><span class="console-badge">${icon("shield")} Super admin</span></header>
+  <header class="top"><div class="breadcrumb">Console <span>/</span> ${options.active === "dashboard" ? "Visão geral" : options.title}</div>
+    <form class="top-search" role="search" method="get" action="/admin/search"><label class="search-input">${icon("search")}<span class="sr-only">Buscar no painel</span><input name="q" value="${options.search ?? ""}" maxlength="100" placeholder="Buscar…" data-global-search autocomplete="off"></label><kbd>Ctrl K</kbd></form>
+    <div class="top-actions">${alertsMenu(options.alerts)}<span class="console-badge">${icon("shield")} Super admin</span></div></header>
   <div class="page-heading"><div><p class="eyebrow">ON CONNECT</p><h1>${options.title}</h1></div><span class="updated-at">Atualizado em ${formatDate(new Date())}</span></div>
   ${options.notice ? html`<div class="notice">${options.notice}</div>` : ""}
   ${options.body}

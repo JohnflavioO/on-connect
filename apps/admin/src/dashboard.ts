@@ -10,6 +10,19 @@ const REASONS: Record<string, string> = {
 };
 const count = (value: string | number | undefined) => Math.max(0, Number(value) || 0);
 
+/**
+ * Change against the previous period of the same length ("+12,5% vs. período
+ * anterior"). Nothing before and something now reads "novo"; nothing in both
+ * reads "sem movimento".
+ */
+export function trend(current: number, previous: number): { text: string; tone: "up" | "down" | "flat" } {
+  if (previous === 0) return current === 0 ? { text: "sem movimento", tone: "flat" } : { text: "novo no período", tone: "up" };
+  const change = Math.round(((current - previous) / previous) * 1000) / 10;
+  if (change === 0) return { text: "0%", tone: "flat" };
+  const formatted = Math.abs(change).toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+  return change > 0 ? { text: `+${formatted}%`, tone: "up" } : { text: `−${formatted}%`, tone: "down" };
+}
+
 export function connectionTable(rows: ConnectionRow[], empty = "Nenhuma conexão encontrada."): Html {
   return html`<div class="table-wrap"><table class="connections-table">
     <thead><tr><th>Sessão / número</th><th>Cliente</th><th>Status</th><th>Última alteração</th><th><span class="sr-only">Ações</span></th></tr></thead>
@@ -62,17 +75,22 @@ export function dashboardView(data: Dashboard, rows: ConnectionRow[], period: 7 
   const sent = count(t?.sent7);
   const received = count(t?.received7);
   const ratio = live ? Math.min(100, Math.round(connected / live * 100)) : 0;
-  const metric = (label: string, value: number, description: string, symbol: IconName, tone: string, href: string) => html`
+  const metric = (label: string, value: number, description: string, symbol: IconName, tone: string, href: string,
+    previous?: number) => {
+    const change = previous === undefined ? null : trend(value, previous);
+    return html`
     <a class="metric-card" href="${href}"><div class="metric-top"><span class="metric-icon ${tone}">${icon(symbol)}</span>${icon("arrow")}</div>
-      <span class="metric-label">${label}</span><strong class="metric-value">${formatNumber(value)}</strong><span class="metric-description">${description}</span></a>`;
+      <span class="metric-label">${label}</span><strong class="metric-value">${formatNumber(value)}</strong><span class="metric-description">${change
+        ? html`<span class="metric-trend ${change.tone}">${change.text}</span> vs. ${period} dias anteriores` : description}</span></a>`;
+  };
   const recent = [...rows].sort((a, b) => b.status_changed_at.getTime() - a.status_changed_at.getTime()).slice(0, 5);
   return html`
     <section class="overview-intro"><div><h2>Uma visão clara da sua operação.</h2><p>Acompanhe suas conexões, o tráfego de mensagens e as entregas aos seus clientes.</p></div>
       <div class="intro-actions"><a class="button" href="/admin?days=${period}">${icon("refresh")} Atualizar</a><a class="button primary" href="/admin/connections">${icon("connection")} Gerenciar conexões</a></div></section>
     <div class="metrics-grid">
       ${metric("Conexões ativas", connected, `${formatNumber(live)} conexões cadastradas`, "connection", "teal", "/admin/connections?status=connected")}
-      ${metric("Mensagens enviadas", sent, `Últimos ${period} dias`, "send", "blue", "#message-volume")}
-      ${metric("Mensagens recebidas", received, `Últimos ${period} dias`, "inbox", "violet", "#message-volume")}
+      ${metric(`Enviadas · ${period} dias`, sent, `Últimos ${period} dias`, "send", "blue", "/admin/messages?direction=outbound", count(t?.sent_prev))}
+      ${metric(`Recebidas · ${period} dias`, received, `Últimos ${period} dias`, "inbox", "violet", "/admin/messages?direction=inbound", count(t?.received_prev))}
       ${metric("Clientes ativos", count(t?.clients), `${formatNumber(t?.tenants ?? 0)} organizações na plataforma`, "users", "amber", "/admin/clients")}
     </div>
     <div class="dashboard-grid">

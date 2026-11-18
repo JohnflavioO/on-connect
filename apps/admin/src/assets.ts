@@ -1628,6 +1628,74 @@ label.setting-row { cursor: pointer; }
   .health-grid { grid-template-columns: 1fr; }
   .monitor-alert { flex-wrap: wrap; }
 }
+
+/* Top bar: global search (Ctrl+K) and the alerts bell. */
+.top-search { display: flex; align-items: center; gap: 8px; flex: 1; max-width: 400px; margin: 0 auto; }
+.top-search .search-input { min-width: 0; }
+.top-search kbd {
+  font-family: inherit; font-size: 9px; font-weight: 500; line-height: 1; color: var(--muted); border: 1px solid var(--line); border-radius: 5px;
+  padding: 4px 6px; white-space: nowrap; background: #13171b;
+}
+.top-actions { display: flex; align-items: center; gap: 10px; }
+.alerts-menu { position: relative; }
+.alerts-menu summary {
+  list-style: none; cursor: pointer; position: relative; display: grid; place-items: center;
+  width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted);
+}
+.alerts-menu summary::-webkit-details-marker { display: none; }
+.alerts-menu summary:hover, .alerts-menu[open] summary { color: var(--text); border-color: #3a404a; }
+.alerts-menu summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.alerts-menu summary .icon { width: 16px; height: 16px; }
+.alerts-count {
+  position: absolute; top: -6px; right: -6px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px;
+  font-size: 9px; font-weight: 700; line-height: 17px; text-align: center; color: #1a1013; background: var(--warn);
+}
+.alerts-count.bad { background: var(--bad); }
+.alerts-panel {
+  position: absolute; right: 0; top: 40px; z-index: 20; width: min(340px, calc(100vw - 32px));
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 18px 40px #0008; overflow: hidden;
+}
+.alerts-head { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 14px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.alerts-head span { font-size: 10px; color: var(--muted); }
+.alerts-panel ul { list-style: none; margin: 0; padding: 6px; max-height: 320px; overflow: auto; }
+.alerts-panel li a { display: flex; gap: 9px; padding: 9px 8px; border-radius: 8px; font-size: 11px; line-height: 1.45; color: var(--text); }
+.alerts-panel li a:hover { background: var(--panel-2); text-decoration: none; }
+.alerts-panel li a .icon { flex: none; width: 15px; height: 15px; margin-top: 1px; }
+.alerts-panel li a.bad .icon { color: var(--bad); }
+.alerts-panel li a.warn .icon { color: var(--warn); }
+.alerts-empty { display: flex; align-items: center; gap: 8px; margin: 0; padding: 16px 14px; font-size: 11px; color: var(--muted); }
+.alerts-empty .icon { width: 15px; height: 15px; color: var(--ok); }
+.alerts-foot { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-top: 1px solid var(--line); font-size: 11px; }
+.alerts-foot .icon { width: 13px; height: 13px; }
+
+/* Dashboard: change against the previous period. */
+.metric-trend { font-weight: 600; }
+.metric-trend.up { color: var(--ok); }
+.metric-trend.down { color: var(--bad); }
+.metric-trend.flat { color: var(--muted); }
+
+/* Messages and search pages. */
+.direction { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.direction .icon { width: 14px; height: 14px; }
+.direction.inbound .icon { color: #8c86f6; }
+.direction.outbound .icon { color: var(--accent); }
+.messages-table td { vertical-align: top; }
+.filter-note { font-size: 11px; margin: 0 0 10px; }
+.search-page-form { margin-bottom: 18px; }
+.search-group { padding-bottom: 8px; }
+.search-results { list-style: none; margin: 0; padding: 0; }
+.search-results li + li { border-top: 1px solid var(--line); }
+.search-results a { display: flex; align-items: center; gap: 12px; padding: 11px 4px; color: var(--text); }
+.search-results a:hover { text-decoration: none; background: var(--panel-2); }
+.search-results a > .icon { width: 17px; height: 17px; color: var(--muted); flex: none; }
+.search-results a > span:not(.badge) { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.search-results small { color: var(--muted); font-size: 10px; }
+
+@media (max-width: 680px) {
+  .top { height: auto; flex-wrap: wrap; padding: 10px 0; }
+  .top-search { order: 3; flex-basis: 100%; max-width: none; }
+  .top-search kbd { display: none; }
+}
 `;
 
 export const JS = `
@@ -1698,4 +1766,20 @@ if (auto) {
     if (document.visibilityState === "visible") window.location.reload();
   }, seconds * 1000);
 }
+
+// Ctrl+K (Cmd+K on Mac) jumps to the search box in the top bar.
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    const input = document.querySelector("[data-global-search]");
+    if (input) { event.preventDefault(); input.focus(); input.select(); }
+  }
+  if (event.key === "Escape") document.querySelectorAll("details[data-dropdown][open]").forEach((d) => d.removeAttribute("open"));
+});
+
+// Dropdowns (the alerts bell) close when clicking anywhere else.
+document.addEventListener("click", (event) => {
+  document.querySelectorAll("details[data-dropdown][open]").forEach((d) => {
+    if (!(event.target instanceof Node) || !d.contains(event.target)) d.removeAttribute("open");
+  });
+});
 `;

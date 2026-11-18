@@ -5,13 +5,16 @@ import QRCode from "qrcode";
 import { CSS, JS } from "./assets.js";
 import { FAVICON_SVG, ICON_PNG, LOGO_PNG } from "./brand.js";
 import { connectionTable, dashboardView } from "./dashboard.js";
-import { badge, formatDate, formatNumber, html, icon, maskUrl, page } from "./html.js";
+import { badge, formatDate, formatNumber, html, icon, maskUrl, page, type PageAlert } from "./html.js";
 import { CONNECTION_TABS, connectionPage, type ConnectionTab } from "./connection-page.js";
 import { endpointPage } from "./endpoint-page.js";
-import { monitoringView } from "./monitoring.js";
+import { MESSAGE_STATUSES, messagesView, searchView } from "./messages-page.js";
+import { evaluateHealth, monitoringView } from "./monitoring.js";
 import {
   DELIVERY_PAGE_SIZE,
+  MESSAGE_PAGE_SIZE,
   MONITORING_WINDOWS,
+  type MessageFilters,
   type Admin,
   type AdminQueries,
   type MonitoringPeriod,
@@ -105,8 +108,23 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     return { name: typeof user === "string" && user ? user.slice(0, 100) : "admin" };
   };
 
-  const show = (reply: FastifyReply, request: FastifyRequest, options2: Omit<Parameters<typeof page>[0], "user">) =>
-    reply.type("text/html; charset=utf-8").send(page({ ...options2, user: adminOf(request).name }));
+  // The bell must never break a page: when the totals cannot be read it
+  // shows "unavailable" instead.
+  const alertsOf = async (request: FastifyRequest): Promise<PageAlert[] | null> => {
+    try {
+      const totals = await queries.alertTotals();
+      return totals ? evaluateHealth(totals, "24h").alerts : [];
+    } catch (error) {
+      request.log.warn({ err: error }, "admin alerts unavailable");
+      return null;
+    }
+  };
+
+  const show = async (reply: FastifyReply, request: FastifyRequest,
+    options2: Omit<Parameters<typeof page>[0], "user" | "alerts">) =>
+    reply.type("text/html; charset=utf-8").send(page({
+      ...options2, user: adminOf(request).name, alerts: await alertsOf(request),
+    }));
 
   const back = (reply: FastifyReply, location: string, notice: string) =>
     reply.redirect(`${location}${location.includes("?") ? "&" : "?"}ok=${encodeURIComponent(notice)}`, 303);
@@ -146,6 +164,47 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     return show(reply, request, {
       title: "Monitoramento", active: "monitoring", notice: noticeOf(request),
       body: monitoringView(await queries.monitoring(period), period),
+    });
+  });
+
+  // ---------------------------------------------------------------- Messages
+  app.get<{ Querystring: { direction?: string; status?: string; connection?: string; q?: string; page?: string } }>(
+    "/admin/messages",
+    async (request, reply) => {
+      const query = request.query;
+      const filters: MessageFilters = {
+        direction: query.direction === "inbound" || query.direction === "outbound" ? query.direction : undefined,
+        status: (MESSAGE_STATUSES as readonly string[]).includes(query.status ?? "") ? query.status : undefined,
+        connection: query.connection && UUID.test(query.connection) ? query.connection : undefined,
+        search: typeof query.q === "string" ? query.q.trim().slice(0, 100) || undefined : undefined,
+      };
+      const currentPage = typeof query.page === "string" && /^[1-9]d{0,3}$/.test(query.page) ? Number(query.page) : 1;
+      const href = (changes: Partial<MessageFilters>) => {
+        const next = { ...filters, page: currentPage, ...changes };
+        const params = new URLSearchParams();
+        if (next.direction) params.set("direction", next.direction);
+        if (next.status) params.set("status", next.status);
+        if (next.connection) params.set("connection", next.connection);
+        if (next.search) params.set("q", next.search);
+        if (next.page && next.page > 1) params.set("page", String(next.page));
+        return `/admin/messages${params.size ? `?${params.toString()}` : ""}`;
+      };
+      const found = await queries.messages({ ...filters, page: currentPage });
+      return show(reply, request, {
+        title: "Mensagens", active: "messages", notice: noticeOf(request),
+        body: messagesView(found.slice(0, MESSAGE_PAGE_SIZE), filters, currentPage, found.length > MESSAGE_PAGE_SIZE, href),
+      });
+    },
+  );
+
+  // ---------------------------------------------------------------- Search
+  app.get<{ Querystring: { q?: string } }>("/admin/search", async (request, reply) => {
+    const term = typeof request.query.q === "string" ? request.query.q.trim().slice(0, 100) : "";
+    const found = term.length >= 2
+      ? await queries.search(term)
+      : { connections: [], clients: [], endpoints: [] };
+    return show(reply, request, {
+      title: "Busca", active: "search", search: term, body: searchView(term.length >= 2 ? term : "", found),
     });
   });
 

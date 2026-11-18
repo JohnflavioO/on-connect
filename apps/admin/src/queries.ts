@@ -19,6 +19,16 @@ export interface DeliveryFilters {
   search?: string | undefined;
 }
 
+export const MESSAGE_PAGE_SIZE = 50;
+export interface MessageFilters {
+  page?: number;
+  direction?: "inbound" | "outbound" | undefined;
+  status?: string | undefined;
+  connection?: string | undefined;
+  /** Session, organization or client; digits also match the other party's number exactly. */
+  search?: string | undefined;
+}
+
 export function createAdminQueries(pool: DatabasePool, pepper: string) {
   const run = async <Row>(sql: string, params: readonly unknown[] = []) => {
     const connection = await pool.connect();
@@ -37,31 +47,60 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
       [clientId, admin.name, action, targetType, targetId, JSON.stringify(metadata)],
     );
 
-  return {
+  const listConnections = (filter: { status?: string | undefined; client?: string | undefined; search?: string | undefined }) =>
+    run<{
+      id: string; session_key: string | null; label: string | null; status: string; status_reason: string | null;
+      status_changed_at: Date; display_phone_number: string | null; verified_name: string | null;
+      tenant: string; client_slug: string; client_id: string; created_at: Date;
+    }>(
+      `SELECT c.id, c.session_key, c.label, c.status, c.status_reason, c.status_changed_at,
+              c.display_phone_number, c.verified_name, t.external_id AS tenant,
+              cl.slug AS client_slug, cl.id AS client_id, c.created_at
+         FROM onconnect.connections c
+         JOIN onconnect.tenants t ON t.id = c.tenant_id
+         JOIN onconnect.clients cl ON cl.id = c.client_id
+        WHERE c.deleted_at IS NULL
+          AND ($1::text IS NULL OR c.status = $1)
+          AND ($2::text IS NULL OR cl.slug = $2)
+          AND ($3::text IS NULL OR strpos(lower(concat_ws(' ', c.session_key, c.label, t.external_id,
+               c.display_phone_number, c.verified_name)), lower($3::text)) > 0)
+        ORDER BY c.status = 'connected', c.status_changed_at DESC
+        LIMIT 500`,
+      [filter.status ?? null, filter.client ?? null, filter.search ?? null],
+    );
+
+  const queries = {
     async dashboard(period: 7 | 14 | 30 = 7) {
+      // The period starts at midnight (São Paulo) period-1 days ago; the
+      // previous period is the same number of days right before it, cut at
+      // the same time of day, so a partial today compares with a partial day.
       const [totals] = await run<{
         connected: string; live: string; clients: string; tenants: string;
-        sent7: string; received7: string; pending: string; dead24: string; disabled: string;
+        sent7: string; received7: string; sent_prev: string; received_prev: string;
+        pending: string; dead24: string; disabled: string;
       }>(
-        `SELECT
+        `WITH p AS (
+           SELECT ((date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') - make_interval(days => $1::integer - 1))
+                    AT TIME ZONE 'America/Sao_Paulo') AS since
+         ), m AS (
+           SELECT count(*) FILTER (WHERE direction = 'outbound' AND created_at >= p.since) AS sent7,
+                  count(*) FILTER (WHERE direction = 'inbound' AND created_at >= p.since) AS received7,
+                  count(*) FILTER (WHERE direction = 'outbound' AND created_at < now() - make_interval(days => $1::integer)) AS sent_prev,
+                  count(*) FILTER (WHERE direction = 'inbound' AND created_at < now() - make_interval(days => $1::integer)) AS received_prev
+             FROM onconnect.messages, p
+            WHERE created_at >= p.since - make_interval(days => $1::integer) AND created_at <= now()
+         )
+         SELECT
            (SELECT count(*) FROM onconnect.connections WHERE deleted_at IS NULL AND status = 'connected') AS connected,
            (SELECT count(*) FROM onconnect.connections WHERE deleted_at IS NULL) AS live,
            (SELECT count(*) FROM onconnect.clients WHERE status = 'active') AS clients,
            (SELECT count(*) FROM onconnect.tenants) AS tenants,
-           (SELECT count(*) FROM onconnect.messages
-             WHERE direction = 'outbound' AND created_at >=
-               ((date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') - make_interval(days => $1::integer - 1))
-                 AT TIME ZONE 'America/Sao_Paulo')
-               AND created_at <= now()) AS sent7,
-           (SELECT count(*) FROM onconnect.messages
-             WHERE direction = 'inbound' AND created_at >=
-               ((date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') - make_interval(days => $1::integer - 1))
-                 AT TIME ZONE 'America/Sao_Paulo')
-               AND created_at <= now()) AS received7,
+           m.sent7, m.received7, m.sent_prev, m.received_prev,
            (SELECT count(*) FROM onconnect.webhook_deliveries WHERE status IN ('pending', 'failed')) AS pending,
            (SELECT count(*) FROM onconnect.webhook_deliveries
              WHERE status = 'dead' AND updated_at > now() - interval '24 hours') AS dead24,
-           (SELECT count(*) FROM onconnect.webhook_endpoints WHERE status = 'disabled') AS disabled`,
+           (SELECT count(*) FROM onconnect.webhook_endpoints WHERE status = 'disabled') AS disabled
+           FROM m`,
         [period],
       );
       const days = await run<{ day: string; sent: string; received: string }>(
@@ -80,28 +119,7 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
       return { totals, days };
     },
 
-    connections(filter: { status?: string | undefined; client?: string | undefined; search?: string | undefined }) {
-      return run<{
-        id: string; session_key: string | null; label: string | null; status: string; status_reason: string | null;
-        status_changed_at: Date; display_phone_number: string | null; verified_name: string | null;
-        tenant: string; client_slug: string; client_id: string; created_at: Date;
-      }>(
-        `SELECT c.id, c.session_key, c.label, c.status, c.status_reason, c.status_changed_at,
-                c.display_phone_number, c.verified_name, t.external_id AS tenant,
-                cl.slug AS client_slug, cl.id AS client_id, c.created_at
-           FROM onconnect.connections c
-           JOIN onconnect.tenants t ON t.id = c.tenant_id
-           JOIN onconnect.clients cl ON cl.id = c.client_id
-          WHERE c.deleted_at IS NULL
-            AND ($1::text IS NULL OR c.status = $1)
-            AND ($2::text IS NULL OR cl.slug = $2)
-            AND ($3::text IS NULL OR strpos(lower(concat_ws(' ', c.session_key, c.label, t.external_id,
-                 c.display_phone_number, c.verified_name)), lower($3::text)) > 0)
-          ORDER BY c.status = 'connected', c.status_changed_at DESC
-          LIMIT 500`,
-        [filter.status ?? null, filter.client ?? null, filter.search ?? null],
-      );
-    },
+    connections: listConnections,
 
     async connection(id: string) {
       const [row] = await run<{
@@ -372,6 +390,67 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
       return true;
     },
 
+    /** Totals of the last 24 hours, for the alerts bell on every page. */
+    async alertTotals(): Promise<MonitoringTotals | null> {
+      const [totals] = await run<MonitoringTotals>(MONITORING_TOTALS_SQL, ["24 hours"]);
+      return totals ?? null;
+    },
+
+    /**
+     * Message log, newest first: who, where, kind and status only. The
+     * payload (text, media) and error_detail are never selected.
+     */
+    messages(filters: MessageFilters = {}) {
+      const page = Math.max(1, Math.min(9999, Math.floor(filters.page ?? 1) || 1));
+      const digits = filters.search?.replace(/\D/g, "") ?? "";
+      return run<{
+        id: string; created_at: Date; direction: string; status: string; message_type: string;
+        counterpart: string; error_code: string | null; connection_id: string; session: string;
+        client_slug: string;
+      }>(
+        `SELECT m.id, m.created_at, m.direction, m.status, m.message_type, m.counterpart, m.error_code,
+                c.id AS connection_id, coalesce(c.session_key, t.external_id) AS session, cl.slug AS client_slug
+           FROM onconnect.messages m
+           JOIN onconnect.connections c ON c.id = m.connection_id
+           JOIN onconnect.tenants t ON t.id = m.tenant_id
+           JOIN onconnect.clients cl ON cl.id = m.client_id
+          WHERE ($1::text IS NULL OR m.direction = $1)
+            AND ($2::text IS NULL OR m.status = $2)
+            AND ($3::uuid IS NULL OR m.connection_id = $3)
+            AND ($4::text IS NULL
+                 OR strpos(lower(concat_ws(' ', c.session_key, t.external_id, cl.slug)), lower($4::text)) > 0
+                 OR (length($5::text) >= 5 AND m.counterpart = $5::text))
+          ORDER BY m.created_at DESC, m.id DESC
+          LIMIT $6 OFFSET $7`,
+        [filters.direction ?? null, filters.status ?? null, filters.connection ?? null, filters.search ?? null,
+          digits, MESSAGE_PAGE_SIZE + 1, (page - 1) * MESSAGE_PAGE_SIZE],
+      );
+    },
+
+    /** Global search (Ctrl+K): connections, clients and webhook endpoints. */
+    async search(term: string) {
+      const [connections, clients, endpoints] = await Promise.all([
+        listConnections({ search: term }).then((rows) => rows.slice(0, 20)),
+        run<{ id: string; slug: string; name: string; status: string }>(
+          `SELECT id, slug, name, status FROM onconnect.clients
+            WHERE strpos(lower(concat_ws(' ', slug, name)), lower($1::text)) > 0
+            ORDER BY name LIMIT 20`,
+          [term],
+        ),
+        run<{ id: string; client_slug: string; tenant: string | null; url: string; status: string }>(
+          `SELECT e.id, cl.slug AS client_slug, t.external_id AS tenant, e.url, e.status
+             FROM onconnect.webhook_endpoints e
+             JOIN onconnect.clients cl ON cl.id = e.client_id
+             LEFT JOIN onconnect.tenants t ON t.id = e.tenant_id
+            WHERE strpos(lower(concat_ws(' ', cl.slug, t.external_id, split_part(split_part(e.url, '://', 2), '/', 1))),
+                         lower($1::text)) > 0
+            ORDER BY cl.slug, e.created_at LIMIT 20`,
+          [term],
+        ),
+      ]);
+      return { connections, clients, endpoints };
+    },
+
     /**
      * Platform health over a rolling window: what is wrong now and how the
      * traffic moved, in buckets sized to the window. Counts and timings only.
@@ -379,35 +458,7 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
     async monitoring(period: MonitoringPeriod) {
       const { window, stride } = MONITORING_WINDOWS[period];
       const [totals] = await run<MonitoringTotals>(
-        `WITH w AS (SELECT now() - $1::interval AS since)
-         SELECT
-           (SELECT count(*) FROM onconnect.connections WHERE deleted_at IS NULL) AS live,
-           (SELECT count(*) FROM onconnect.connections WHERE deleted_at IS NULL AND status = 'connected') AS connected,
-           (SELECT count(*) FROM onconnect.webhook_events, w
-             WHERE event_type = 'connection.status' AND created_at >= w.since
-               AND payload ->> 'status' IN ('disconnected', 'error')) AS drops,
-           (SELECT count(*) FROM onconnect.messages, w
-             WHERE direction = 'inbound' AND created_at >= w.since) AS received,
-           (SELECT count(*) FROM onconnect.messages, w
-             WHERE direction = 'outbound' AND created_at >= w.since) AS sent,
-           (SELECT count(*) FROM onconnect.messages, w
-             WHERE direction = 'outbound' AND status = 'failed' AND failed_at >= w.since) AS send_failed,
-           (SELECT count(*) FROM onconnect.messages
-             WHERE direction = 'outbound' AND status IN ('queued', 'sending')
-               AND created_at < now() - interval '5 minutes') AS send_stuck,
-           (SELECT max(created_at) FROM onconnect.messages WHERE direction = 'inbound') AS last_received_at,
-           (SELECT count(*) FROM onconnect.webhook_deliveries, w
-             WHERE status = 'delivered' AND delivered_at >= w.since) AS delivered,
-           (SELECT count(*) FROM onconnect.webhook_deliveries, w
-             WHERE status = 'failed' AND updated_at >= w.since) AS retrying,
-           (SELECT count(*) FROM onconnect.webhook_deliveries, w
-             WHERE status = 'dead' AND updated_at >= w.since) AS dead,
-           (SELECT count(*) FROM onconnect.webhook_deliveries WHERE status IN ('pending', 'failed')) AS queued,
-           (SELECT round(avg(extract(epoch FROM d.delivered_at - e.created_at) * 1000))
-              FROM onconnect.webhook_deliveries d
-              JOIN onconnect.webhook_events e ON e.id = d.event_id, w
-             WHERE d.status = 'delivered' AND d.delivered_at >= w.since) AS delivery_ms,
-           (SELECT count(*) FROM onconnect.webhook_endpoints WHERE status = 'disabled') AS disabled_endpoints`,
+        MONITORING_TOTALS_SQL,
         [window],
       );
 
@@ -465,7 +516,39 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
       return { totals, buckets, problems };
     },
   };
+  return queries;
 }
+
+/** Platform totals over a rolling window ($1, an interval): monitoring cards and the alerts bell. */
+const MONITORING_TOTALS_SQL = `WITH w AS (SELECT now() - $1::interval AS since)
+  SELECT
+    (SELECT count(*) FROM onconnect.connections WHERE deleted_at IS NULL) AS live,
+    (SELECT count(*) FROM onconnect.connections WHERE deleted_at IS NULL AND status = 'connected') AS connected,
+    (SELECT count(*) FROM onconnect.webhook_events, w
+      WHERE event_type = 'connection.status' AND created_at >= w.since
+        AND payload ->> 'status' IN ('disconnected', 'error')) AS drops,
+    (SELECT count(*) FROM onconnect.messages, w
+      WHERE direction = 'inbound' AND created_at >= w.since) AS received,
+    (SELECT count(*) FROM onconnect.messages, w
+      WHERE direction = 'outbound' AND created_at >= w.since) AS sent,
+    (SELECT count(*) FROM onconnect.messages, w
+      WHERE direction = 'outbound' AND status = 'failed' AND failed_at >= w.since) AS send_failed,
+    (SELECT count(*) FROM onconnect.messages
+      WHERE direction = 'outbound' AND status IN ('queued', 'sending')
+        AND created_at < now() - interval '5 minutes') AS send_stuck,
+    (SELECT max(created_at) FROM onconnect.messages WHERE direction = 'inbound') AS last_received_at,
+    (SELECT count(*) FROM onconnect.webhook_deliveries, w
+      WHERE status = 'delivered' AND delivered_at >= w.since) AS delivered,
+    (SELECT count(*) FROM onconnect.webhook_deliveries, w
+      WHERE status = 'failed' AND updated_at >= w.since) AS retrying,
+    (SELECT count(*) FROM onconnect.webhook_deliveries, w
+      WHERE status = 'dead' AND updated_at >= w.since) AS dead,
+    (SELECT count(*) FROM onconnect.webhook_deliveries WHERE status IN ('pending', 'failed')) AS queued,
+    (SELECT round(avg(extract(epoch FROM d.delivered_at - e.created_at) * 1000))
+       FROM onconnect.webhook_deliveries d
+       JOIN onconnect.webhook_events e ON e.id = d.event_id, w
+      WHERE d.status = 'delivered' AND d.delivered_at >= w.since) AS delivery_ms,
+    (SELECT count(*) FROM onconnect.webhook_endpoints WHERE status = 'disabled') AS disabled_endpoints`;
 
 export type MonitoringPeriod = "1h" | "24h" | "7d" | "30d";
 
