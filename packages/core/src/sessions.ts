@@ -14,7 +14,9 @@ export type SessionCommand =
   | { type: "start"; connectionId: string }
   | { type: "logout"; connectionId: string }
   | { type: "pairing-code"; connectionId: string; phoneNumber: string }
-  | { type: "profile-picture"; connectionId: string; phoneNumber: string; requestId: string };
+  | { type: "profile-picture"; connectionId: string; phoneNumber: string; requestId: string }
+  /** Meta Embedded Signup: the code (valid 5 minutes, single use) to finish onboarding. */
+  | { type: "meta-signup"; connectionId: string; code: string; requestId: string };
 
 const KEY_PREFIX = `${QUEUE_PREFIX}:wa`;
 
@@ -27,6 +29,8 @@ export const sessionKeys = {
   profilePicture: (requestId: string) => `${KEY_PREFIX}:avatar:${requestId}`,
   /** Hash with the encrypted WhatsApp Web auth state of one connection. */
   authState: (connectionId: string) => `${KEY_PREFIX}:auth:${connectionId}`,
+  /** Outcome of one Meta signup: "ok" or "error:<code>". */
+  metaSignup: (requestId: string) => `${KEY_PREFIX}:meta-signup:${requestId}`,
 } as const;
 
 /** WhatsApp rotates the QR roughly every 20 seconds. */
@@ -54,6 +58,16 @@ export interface SessionGateway {
    * the message id, so a replay from the outbox never sends twice.
    */
   dispatchMessage(messageId: string): Promise<void>;
+  /**
+   * Finishes Meta Embedded Signup for a connection: the sessions process
+   * swaps the code for the customer's token, links the account to the app
+   * and registers the number. Undefined when no answer came in time.
+   */
+  completeMetaSignup(
+    connectionId: string,
+    code: string,
+    timeoutMs?: number,
+  ): Promise<{ ok: true } | { ok: false; error: string } | undefined>;
 }
 
 export interface SessionGatewayOptions {
@@ -112,6 +126,23 @@ export function createSessionGateway(options: SessionGatewayOptions): SessionGat
     },
 
     dispatchMessage: (messageId) => enqueueOutbound(outbound, messageId),
+
+    async completeMetaSignup(connectionId, code, timeoutMs = 45_000) {
+      const requestId = randomUUID();
+      const key = sessionKeys.metaSignup(requestId);
+      // The code is a short-lived credential: one attempt, and the job is
+      // removed from Redis as soon as it ends either way.
+      await queue.add("meta-signup", { type: "meta-signup", connectionId, code, requestId },
+        { attempts: 1, removeOnComplete: true, removeOnFail: true });
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const answer = await redis.getdel(key);
+        if (answer === "ok") return { ok: true };
+        if (answer?.startsWith("error:")) return { ok: false, error: answer.slice("error:".length) };
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      }
+      return undefined;
+    },
 
     close: async () => {
       await Promise.all([queue.close(), outbound.close()]);

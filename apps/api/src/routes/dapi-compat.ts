@@ -1,6 +1,8 @@
 import {
   CompatSessionError,
   MessageRejectedError,
+  MetaSignupError,
+  attachMetaToSession,
   checkWebhookUrl,
   createOutboundMessage,
   deleteCompatSession,
@@ -72,6 +74,12 @@ const URL_ERRORS = {
   too_long: "webhookUrl is longer than 2048 characters",
   private_address: "webhookUrl must point to a public internet host",
 } as const;
+
+const META_SIGNUP_ERRORS: Record<MetaSignupError["reason"], [number, string]> = {
+  session_in_use: [409, "The session already has a connection; send replace: true to switch it to the official number"],
+  number_in_use: [409, "This phone number is already connected"],
+  tenant_inactive: [403, "Session is suspended"],
+};
 
 const SEND_ERRORS: Record<MessageRejectedError["reason"], [number, string]> = {
   connection_not_found: [404, "Session not found"],
@@ -311,6 +319,69 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
       }
       if (!found) return notFound(reply);
       return { success: true, sessionId: request.params.sessionId };
+    },
+  );
+
+  /**
+   * Meta Embedded Signup finished in the integrator's page: the official
+   * number becomes this session's connection. Not part of D-API (an On
+   * Connect extension on the same session). The code goes straight to the
+   * sessions process, which swaps it for the customer's token and onboards
+   * the number; this call waits for that outcome.
+   */
+  app.post<{ Params: Params; Body: { code: string; wabaId: string; phoneNumberId: string; replace?: boolean } }>(
+    "/sessions/:sessionId/meta-signup",
+    {
+      schema: {
+        params: sessionParams,
+        body: {
+          type: "object",
+          required: ["code", "wabaId", "phoneNumberId"],
+          additionalProperties: false,
+          properties: {
+            code: { type: "string", minLength: 10, maxLength: 4096 },
+            wabaId: { type: "string", pattern: "^[0-9]{5,30}$" },
+            phoneNumberId: { type: "string", pattern: "^[0-9]{5,30}$" },
+            replace: { type: "boolean" },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { sessionId } = request.params;
+      const { code, wabaId, phoneNumberId } = request.body;
+      const principal = principalOf(request);
+      let attached: { connectionId: string; replaced: string[] };
+      try {
+        attached = await withClientTransaction(db, principal, (tx) =>
+          attachMetaToSession(tx, principal, sessionId, { phoneNumberId, wabaId, replace: request.body.replace === true }));
+      } catch (error) {
+        if (error instanceof MetaSignupError) {
+          const [status, message] = META_SIGNUP_ERRORS[error.reason];
+          return fail(reply, status, message);
+        }
+        throw error;
+      }
+      // The replaced WhatsApp Web number leaves, as when a session is deleted.
+      for (const id of attached.replaced) await sessions.logout(id);
+      const outcome = await sessions.completeMetaSignup(attached.connectionId, code);
+      if (!outcome) {
+        return fail(reply, 504, "Meta onboarding is still running; check the session status in a minute");
+      }
+      if (!outcome.ok) {
+        request.log.warn({ sessionId, code: outcome.error }, "meta signup failed");
+        return reply.code(502).send({
+          success: false, error: `Meta onboarding failed (${outcome.error})`, statusCode: 502, sessionId,
+        });
+      }
+      const session = await load(request, sessionId);
+      return {
+        success: true,
+        sessionId,
+        status: session ? dapiStatus(session.status) : "connecting",
+        provider: "meta_cloud",
+        connectionType: "official",
+      };
     },
   );
 

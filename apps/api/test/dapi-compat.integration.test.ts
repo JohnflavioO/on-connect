@@ -407,4 +407,41 @@ describe.skipIf(!enabled)("D-API compatible sessions (PostgreSQL 17)", () => {
     const response = await pending;
     expect(response.json()).toMatchObject({ success: true, messageId: "wamid.COMPAT1", data: { key: { id: "wamid.COMPAT1" } } });
   });
+  it("attaches the number from Meta's Embedded Signup to a session, replacing it only when asked", async () => {
+    const SIGNUP = "tendi-signup-0000-4000-8000-000000000091";
+    const body = { code: "AQB-signup-code-123", wabaId: "200000000000091", phoneNumberId: "106540352200092" };
+
+    // A session with no connection yet: tenant and official connection are created.
+    const first = await call(keyA, "POST", `/sessions/${SIGNUP}/meta-signup`, body);
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ success: true, sessionId: SIGNUP, connectionType: "official" });
+    const firstId = await connectionOf(A, SIGNUP);
+    expect(sessions.metaSignups.at(-1)).toEqual([firstId, "AQB-signup-code-123"]);
+    const [row] = await sql<Record<string, unknown>>(
+      "SELECT provider, phone_number_id, waba_id, status_reason FROM onconnect.connections WHERE id = $1", [firstId]);
+    expect(row).toEqual({ provider: "meta_cloud", phone_number_id: "106540352200092", waba_id: "200000000000091",
+      status_reason: "meta_signup" });
+
+    // The session has a connection: refused without replace, then replaced and the old one logged out.
+    const again = { ...body, phoneNumberId: "106540352200093" };
+    expect((await call(keyA, "POST", `/sessions/${SIGNUP}/meta-signup`, again)).statusCode).toBe(409);
+    const replaced = await call(keyA, "POST", `/sessions/${SIGNUP}/meta-signup`, { ...again, replace: true });
+    expect(replaced.statusCode).toBe(200);
+    expect(sessions.loggedOut).toContain(firstId);
+    expect(await connectionOf(A, SIGNUP)).not.toBe(firstId);
+
+    // Another client cannot take a number that is live: refused, nothing changes.
+    const taken = await call(keyB, "POST", `/sessions/${SIGNUP}/meta-signup`, { ...again, replace: true });
+    expect(taken.statusCode).toBe(409);
+
+    // Meta refused the code: the call reports it.
+    sessions.metaSignupResult = { ok: false, error: "meta_100" };
+    const failed = await call(keyA, "POST", `/sessions/${SIGNUP}/meta-signup`,
+      { ...body, phoneNumberId: "106540352200094", replace: true });
+    expect(failed.statusCode).toBe(502);
+    const failure = failed.json<{ success: boolean; error: string }>();
+    expect(failure.success).toBe(false);
+    expect(failure.error).toContain("meta_100");
+    sessions.metaSignupResult = { ok: true };
+  });
 });

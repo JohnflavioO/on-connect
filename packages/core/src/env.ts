@@ -104,9 +104,18 @@ const sessionsSchema = baseSchema.extend({
    * Meta connections stay in error ("meta_not_configured").
    */
   META_ACCESS_TOKEN: optional(z.string().min(20)),
+  /**
+   * Meta Embedded Signup (customers connect their own number): the app id and
+   * app secret swap the signup code for the customer's token. Both or neither.
+   */
+  META_APP_ID: optional(z.string().regex(/^[0-9]{5,30}$/, "Expected the numeric Meta app id")),
+  META_APP_SECRET: optional(z.string().min(16)),
   /** Graph API version, e.g. v23.0. Meta retires versions about two years after release. */
   META_GRAPH_VERSION: z.preprocess((value) => (value === "" ? undefined : value),
     z.string().regex(/^v[0-9]+\.[0-9]+$/, "Expected a version like v23.0").default("v23.0")),
+}).refine((env) => (env.META_APP_ID === undefined) === (env.META_APP_SECRET === undefined), {
+  message: "Set META_APP_ID and META_APP_SECRET together, or neither",
+  path: ["META_APP_SECRET"],
 });
 
 /**

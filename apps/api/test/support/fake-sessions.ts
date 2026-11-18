@@ -30,4 +30,11 @@ export class FakeSessions implements SessionGateway {
   async requestProfilePicture(_connectionId: string, phoneNumber: string) {
     return this.pictures.has(phoneNumber) ? this.pictures.get(phoneNumber) ?? null : undefined;
   }
+  /** Connection id and code of each Meta signup; the outcome is `metaSignupResult`. */
+  readonly metaSignups: Array<[string, string]> = [];
+  metaSignupResult: { ok: true } | { ok: false; error: string } | undefined = { ok: true };
+  async completeMetaSignup(connectionId: string, code: string) {
+    this.metaSignups.push([connectionId, code]);
+    return this.metaSignupResult;
+  }
 }

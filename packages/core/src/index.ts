@@ -145,6 +145,8 @@ export { fetchPublicBytes, publicOnlyLookup, type FetchedBytes } from "./safe-ht
 export {
   CompatSessionError,
   DAPI_COMPAT_EVENTS,
+  MetaSignupError,
+  attachMetaToSession,
   DAPI_SESSION_ID,
   deleteCompatSession,
   findCompatSession,

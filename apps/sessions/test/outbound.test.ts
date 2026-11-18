@@ -136,7 +136,7 @@ describe("outbound processor with Meta", () => {
     const t = metaSetup(async () => "wamid.OUT");
     expect(await t.process(attempt(1))).toBe("sent");
     expect(t.store.markSending).toHaveBeenCalledWith("m1", null);
-    expect(t.meta?.send).toHaveBeenCalledWith("106540352242922", "5511999999999", { type: "text", text: "oi" });
+    expect(t.meta?.send).toHaveBeenCalledWith("c1", "106540352242922", "5511999999999", { type: "text", text: "oi" });
     expect(t.store.markSent).toHaveBeenCalledWith("m1", "wamid.OUT");
     expect(t.sender.newMessageId).not.toHaveBeenCalled();
     expect(t.sender.sendText).not.toHaveBeenCalled();

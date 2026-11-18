@@ -1,4 +1,4 @@
-import type { ConnectionStatus, DatabasePool, OutboundContent } from "@on-connect/core";
+import type { ConnectionStatus, DatabasePool, OutboundContent, SealedParts } from "@on-connect/core";
 import type { InboundMessage, StatusUpdate } from "./message-mapping.js";
 
 export interface ConnectedAccount {
@@ -14,6 +14,8 @@ export interface SessionRow {
   deleted: boolean;
   /** Meta connections only. */
   phoneNumberId: string | null;
+  /** Meta connections only: the WhatsApp Business Account. */
+  wabaId?: string | null;
 }
 
 /** What Meta reports about a phone number (GET /{phone-number-id}). */
@@ -33,6 +35,10 @@ export interface MetaConnectionStore {
   metaCheckIds(): Promise<string[]>;
   /** Whether an outbound message with this provider id is stored. */
   knowsOutbound(connectionId: string, providerMessageId: string): Promise<boolean>;
+  /** The connection's own Meta credential (Embedded Signup), encrypted; null for the global token. */
+  loadMetaCredential(connectionId: string): Promise<SealedParts | null>;
+  /** Stores (or replaces) the connection's encrypted credential. */
+  saveMetaCredential(connectionId: string, sealed: SealedParts, tokenType: string): Promise<void>;
 }
 
 /** Durable connection state, written with the onconnect_system role. */
@@ -115,14 +121,16 @@ export function createPostgresSessionStore(
     async load(connectionId) {
       const result = await run<{
         id: string; provider: string; status: ConnectionStatus; deleted: boolean; phone_number_id: string | null;
+        waba_id: string | null;
       }>(
-        `SELECT id, provider, status, deleted_at IS NOT NULL AS deleted, phone_number_id
+        `SELECT id, provider, status, deleted_at IS NOT NULL AS deleted, phone_number_id, waba_id
            FROM onconnect.connections WHERE id = $1`,
         [connectionId],
       );
       const row = result.rows[0];
       return row
-        ? { id: row.id, provider: row.provider, status: row.status, deleted: row.deleted, phoneNumberId: row.phone_number_id }
+        ? { id: row.id, provider: row.provider, status: row.status, deleted: row.deleted,
+            phoneNumberId: row.phone_number_id, wabaId: row.waba_id }
         : null;
     },
 
@@ -207,6 +215,27 @@ export function createPostgresSessionStore(
         [],
       );
       return result.rows.map((row) => row.id);
+    },
+
+    async loadMetaCredential(connectionId) {
+      const result = await run<{ nonce: Buffer; auth_tag: Buffer; ciphertext: Buffer }>(
+        "SELECT nonce, auth_tag, ciphertext FROM onconnect.provider_credentials WHERE connection_id = $1",
+        [connectionId],
+      );
+      const row = result.rows[0];
+      return row ? { nonce: row.nonce, tag: row.auth_tag, ciphertext: row.ciphertext } : null;
+    },
+
+    async saveMetaCredential(connectionId, sealed, tokenType) {
+      await run(
+        `INSERT INTO onconnect.provider_credentials
+           (client_id, connection_id, ciphertext, nonce, auth_tag, key_version, token_type)
+         SELECT client_id, id, $2, $3, $4, 1, $5 FROM onconnect.connections WHERE id = $1
+         ON CONFLICT (connection_id) DO UPDATE
+           SET ciphertext = EXCLUDED.ciphertext, nonce = EXCLUDED.nonce, auth_tag = EXCLUDED.auth_tag,
+               key_version = EXCLUDED.key_version, token_type = EXCLUDED.token_type`,
+        [connectionId, sealed.ciphertext, sealed.nonce, sealed.tag, tokenType],
+      );
     },
 
     async knowsOutbound(connectionId, providerMessageId) {
