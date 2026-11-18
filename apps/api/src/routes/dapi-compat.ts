@@ -121,6 +121,15 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
 
   const notFound = (reply: FastifyReply) => fail(reply, 404, "Session not found");
 
+  /**
+   * Extra fields (D-API clients ignore unknown ones): whether the session is
+   * an official Meta Cloud API number, which has no QR and is linked at Meta.
+   */
+  const connectionKind = (session: CompatSession) => ({
+    provider: session.provider,
+    connectionType: session.provider === "meta_cloud" ? "official" : "unofficial",
+  });
+
   const badWebhook = (reply: FastifyReply, url: string) => {
     const issue = checkWebhookUrl(url);
     return issue ? fail(reply, 400, URL_ERRORS[issue]) : null;
@@ -172,6 +181,7 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
         sessionId,
         status: session.status === "connected" ? "connected" : "connecting",
         message: created ? "Session created" : "Session already exists; started",
+        ...connectionKind(session),
       };
     },
   );
@@ -191,6 +201,7 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
           phone: session.phone,
           phoneNumber: session.phone,
           displayName: session.displayName,
+          ...connectionKind(session),
         },
       };
     },
@@ -217,10 +228,13 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
     async (request, reply) => {
       const session = await load(request, request.params.sessionId);
       if (!session) return notFound(reply);
-      if (session.status === "connected") {
+      if (session.status === "connected" || session.provider === "meta_cloud") {
         return {
           success: true,
-          data: { sessionId: session.sessionId, status: "connected", qrCode: null, qrCodeImage: null },
+          data: {
+            sessionId: session.sessionId, status: dapiStatus(session.status), qrCode: null, qrCodeImage: null,
+            ...connectionKind(session),
+          },
         };
       }
       const qr = await sessions.currentQr(session.connectionId);
@@ -355,10 +369,14 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
       const deadline = Date.now() + (content.type === "text" ? sendWaitMs : sendWaitMs * 2.5);
       let status = "queued";
       let errorCode: string | null = null;
+      // WhatsApp Web sends under the id generated above; Meta assigns its own
+      // (wamid) when it accepts, and statuses arrive under that one.
+      let sentId = providerMessageId;
       while (Date.now() < deadline) {
         const current = await withClientTransaction(db, principal, (tx) => findMessage(tx, messageId));
         status = current?.status ?? status;
         errorCode = current?.errorCode ?? null;
+        sentId = current?.providerMessageId ?? sentId;
         if (status !== "queued" && status !== "sending") break;
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
@@ -367,15 +385,15 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
           success: false,
           error: `Message could not be sent (${errorCode ?? "send_failed"})`,
           statusCode: 502,
-          messageId: providerMessageId,
+          messageId: sentId,
         });
       }
-      const key = { id: providerMessageId, remoteJid: `${to}@s.whatsapp.net`, fromMe: true };
+      const key = { id: sentId, remoteJid: `${to}@s.whatsapp.net`, fromMe: true };
       return {
         success: true,
-        messageId: providerMessageId,
+        messageId: sentId,
         status,
-        data: { messageId: providerMessageId, id: providerMessageId, key, status },
+        data: { messageId: sentId, id: sentId, key, status },
       };
     }
   };

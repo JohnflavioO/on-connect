@@ -381,4 +381,47 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
     const one = await queries.connection(id);
     expect(one).toMatchObject({ provider: "meta_cloud", phone_number_id: "106540352299001", quality_rating: null });
   });
+  it("attaches a Meta number to a Tendi session, replacing its QR connection only when asked", async () => {
+    const SESSION = "tendi-admin-meta-session";
+    const input = { clientId: CLIENT, sessionKey: SESSION, phoneNumberId: "106540352299002",
+      wabaId: null, label: "Oficial", replace: false };
+
+    // A new session: tenant created with room for one, connection carries the session key.
+    const first = await queries.createMetaSession(admin, input);
+    expect(first).toMatchObject({ replaced: [] });
+    const firstId = "id" in first ? first.id : "";
+    const [row] = await sql<Record<string, unknown>>(
+      `SELECT c.provider, c.session_key, c.status_reason, t.external_id, t.max_connections
+         FROM onconnect.connections c JOIN onconnect.tenants t ON t.id = c.tenant_id WHERE c.id = $1`, [firstId]);
+    expect(row).toEqual({ provider: "meta_cloud", session_key: SESSION, status_reason: "checking_meta",
+      external_id: SESSION, max_connections: 1 });
+
+    // The session now has a connection: refused without "replace".
+    const other = { ...input, phoneNumberId: "106540352299003" };
+    expect(await queries.createMetaSession(admin, other)).toEqual({ error: "session_in_use" });
+
+    // With "replace": the old one is retired and audited, the new one takes the session.
+    const second = await queries.createMetaSession(admin, { ...other, replace: true });
+    expect(second).toMatchObject({ replaced: [firstId] });
+    const secondId = "id" in second ? second.id : "";
+    const [old] = await sql<{ deleted: boolean; status_reason: string }>(
+      "SELECT deleted_at IS NOT NULL AS deleted, status_reason FROM onconnect.connections WHERE id = $1", [firstId]);
+    expect(old).toEqual({ deleted: true, status_reason: "replaced_by_official" });
+    const [live] = await sql<{ id: string }>(
+      "SELECT id FROM onconnect.connections WHERE client_id = $1 AND session_key = $2 AND deleted_at IS NULL",
+      [CLIENT, SESSION]);
+    expect(live?.id).toBe(secondId);
+    const audits = await sql<{ action: string }>(
+      `SELECT action FROM onconnect.audit_log WHERE actor_id = 'john' AND target_id = ANY($1::text[]) ORDER BY id`,
+      [[firstId, secondId]]);
+    expect(audits.map((a) => a.action)).toEqual(["connection.created", "connection.deleted", "connection.created"]);
+
+    // A phone number id already live elsewhere rolls everything back.
+    const taken = await queries.createMetaSession(admin, { ...input, sessionKey: "tendi-admin-other",
+      phoneNumberId: "106540352299003" });
+    expect(taken).toEqual({ error: "number_in_use" });
+    const [tenant] = await sql<{ n: string }>(
+      "SELECT count(*) AS n FROM onconnect.tenants WHERE client_id = $1 AND external_id = 'tendi-admin-other'", [CLIENT]);
+    expect(tenant?.n).toBe("0");
+  });
 });

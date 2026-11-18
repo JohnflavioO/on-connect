@@ -424,6 +424,12 @@ select {
   color: var(--muted);
   font-size: 12px;
 }
+.stack fieldset.choice { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 0; display: grid; gap: 8px; }
+.stack fieldset.choice legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+.stack label.radio, .stack label.checkbox { display: flex; align-items: flex-start; gap: 10px; color: var(--text); }
+.stack label.radio input, .stack label.checkbox input { width: auto; margin-top: 3px; }
+.stack label.radio span, .stack label.checkbox span { display: grid; gap: 2px; }
+.stack label.radio small, .stack label.checkbox small { color: var(--muted); font-size: 11px; }
 form.inline {
   display: inline;
 }

@@ -33,6 +33,8 @@ export interface CompatSession {
   tenantExternalId: string;
   status: "pending" | "connecting" | "connected" | "disconnected" | "error";
   statusReason: string | null;
+  /** whatsapp_web (QR) or meta_cloud (official number, no QR). */
+  provider: "whatsapp_web" | "meta_cloud";
   phone: string | null;
   displayName: string | null;
 }
@@ -50,6 +52,7 @@ interface SessionRow {
   tenant_external_id: string;
   status: CompatSession["status"];
   status_reason: string | null;
+  provider: CompatSession["provider"];
   display_phone_number: string | null;
   verified_name: string | null;
 }
@@ -61,6 +64,7 @@ function toSession(row: SessionRow): CompatSession {
     tenantExternalId: row.tenant_external_id,
     status: row.status,
     statusReason: row.status_reason,
+    provider: row.provider,
     phone: row.display_phone_number,
     displayName: row.verified_name,
   };
@@ -72,7 +76,7 @@ export async function findCompatSession(
 ): Promise<CompatSession | null> {
   const result = await tx.query<SessionRow>(
     `SELECT c.id, c.session_key, t.external_id AS tenant_external_id, c.status, c.status_reason,
-            c.display_phone_number, c.verified_name
+            c.provider, c.display_phone_number, c.verified_name
        FROM onconnect.connections c
        JOIN onconnect.tenants t ON t.id = c.tenant_id AND t.client_id = c.client_id
       WHERE c.client_id = onconnect.current_client_id() AND c.deleted_at IS NULL

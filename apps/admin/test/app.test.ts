@@ -73,6 +73,7 @@ function fakeQueries() {
     }]),
     deleteConnection: vi.fn(async () => true),
     createMetaConnection: vi.fn<AdminQueries["createMetaConnection"]>(async () => ({ id: META_CONN })),
+    createMetaSession: vi.fn<AdminQueries["createMetaSession"]>(async () => ({ id: META_CONN, replaced: [] })),
     updateConnectionBehavior: vi.fn(async () => true),
     webhookEndpoint: vi.fn(async (id: string) => id === KEY || id === NATIVE
       ? {
@@ -488,30 +489,60 @@ describe("Meta connections", () => {
     expect(response.body).not.toMatch(/name="(token|accessToken)"/);
   });
 
-  it("creates the connection, then asks the sessions process to check it", async () => {
+  it("creates a native-organization connection, then asks the sessions process to check it", async () => {
     const instance = await start();
     const response = await post(instance, "/admin/connections/meta",
-      `clientId=${CLIENT}&tenant=tendi-org-1&phoneNumberId=106540352242922&wabaId=200000000000001&label=Oficial`);
+      `clientId=${CLIENT}&mode=tenant&target=tendi-org-1&phoneNumberId=106540352242922&wabaId=200000000000001&label=Oficial`);
     expect(response.statusCode).toBe(303);
     expect(response.headers.location).toContain(`/admin/connections/${META_CONN}?ok=`);
     expect(queries.createMetaConnection).toHaveBeenCalledWith({ name: "john" }, {
       clientId: CLIENT, tenantExternalId: "tendi-org-1", phoneNumberId: "106540352242922",
       wabaId: "200000000000001", label: "Oficial",
     });
+    expect(queries.createMetaSession).not.toHaveBeenCalled();
     expect(sessions.start).toHaveBeenCalledWith(META_CONN);
+  });
+
+  it("attaches the number to a Tendi session, logging the replaced QR number out first", async () => {
+    const instance = await start();
+    const OLD = "66666666-6666-4666-8666-666666666666";
+    queries.createMetaSession.mockResolvedValueOnce({ id: META_CONN, replaced: [OLD] });
+    const response = await post(instance, "/admin/connections/meta",
+      `clientId=${CLIENT}&mode=session&target=tendi-637a9d9f&replace=on&phoneNumberId=106540352242922`);
+    expect(response.headers.location).toContain(`/admin/connections/${META_CONN}?ok=`);
+    expect(queries.createMetaSession).toHaveBeenCalledWith({ name: "john" }, {
+      clientId: CLIENT, sessionKey: "tendi-637a9d9f", phoneNumberId: "106540352242922",
+      wabaId: null, label: null, replace: true,
+    });
+    expect(sessions.logout).toHaveBeenCalledWith(OLD);
+    expect(sessions.start).toHaveBeenCalledWith(META_CONN);
+    expect(sessions.logout.mock.invocationCallOrder[0]).toBeLessThan(sessions.start.mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it("asks to confirm the replacement when the session already has a connection", async () => {
+    const instance = await start();
+    queries.createMetaSession.mockResolvedValueOnce({ error: "session_in_use" });
+    const response = await post(instance, "/admin/connections/meta",
+      `clientId=${CLIENT}&mode=session&target=tendi-637a9d9f&phoneNumberId=106540352242922`);
+    expect(decodeURIComponent(String(response.headers.location))).toContain("Substituir a conexão atual");
+    expect(queries.createMetaSession).toHaveBeenCalledWith({ name: "john" }, expect.objectContaining({ replace: false }));
+    expect(sessions.logout).not.toHaveBeenCalled();
+    expect(sessions.start).not.toHaveBeenCalled();
   });
 
   it("refuses bad ids before the database and explains database refusals", async () => {
     const instance = await start();
-    for (const body of [`clientId=x&tenant=t&phoneNumberId=1065`, `clientId=${CLIENT}&tenant=t&phoneNumberId=12ab345`,
-      `clientId=${CLIENT}&tenant=&phoneNumberId=106540352242922`]) {
+    for (const body of [`clientId=x&target=t&phoneNumberId=1065`, `clientId=${CLIENT}&target=t&phoneNumberId=12ab345`,
+      `clientId=${CLIENT}&target=&phoneNumberId=106540352242922`,
+      `clientId=${CLIENT}&mode=session&target=tendi%20org%2F1&phoneNumberId=106540352242922`]) {
       const response = await post(instance, "/admin/connections/meta", body);
       expect(response.headers.location).toContain("/admin/connections/new-meta?ok=");
     }
     expect(queries.createMetaConnection).not.toHaveBeenCalled();
+    expect(queries.createMetaSession).not.toHaveBeenCalled();
 
-    queries.createMetaConnection.mockResolvedValueOnce({ error: "number_in_use" });
-    const taken = await post(instance, "/admin/connections/meta", `clientId=${CLIENT}&tenant=t&phoneNumberId=106540352242922`);
+    queries.createMetaSession.mockResolvedValueOnce({ error: "number_in_use" });
+    const taken = await post(instance, "/admin/connections/meta", `clientId=${CLIENT}&target=t&phoneNumberId=106540352242922`);
     expect(decodeURIComponent(String(taken.headers.location))).toContain("já está em outra conexão");
     expect(sessions.start).not.toHaveBeenCalled();
   });

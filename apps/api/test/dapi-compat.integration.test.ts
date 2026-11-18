@@ -361,4 +361,50 @@ describe.skipIf(!enabled)("D-API compatible sessions (PostgreSQL 17)", () => {
     expect(recreated.statusCode).toBe(200);
     expect(await connectionOf(A, SESSION)).not.toBe(old);
   });
+  it("shows an official Meta number as the session's connection, without a QR", async () => {
+    const META_SESSION = "tendi-meta-0000-4000-8000-000000000091";
+    const [tenant] = await sql<{ id: string }>(
+      `INSERT INTO onconnect.tenants (client_id, external_id, name, max_connections)
+       VALUES ($1, $2, $2, 1) RETURNING id`, [A, META_SESSION]);
+    await sql(
+      `INSERT INTO onconnect.connections
+         (client_id, tenant_id, provider, status, session_key, phone_number_id, display_phone_number, verified_name)
+       VALUES ($1, $2, 'meta_cloud', 'connected', $3, '106540352200091', '5585999990091', 'Loja Oficial')`,
+      [A, tenant?.id, META_SESSION]);
+
+    const status = await call(keyA, "GET", `/sessions/${META_SESSION}`);
+    expect(status.json()).toMatchObject({
+      success: true,
+      data: { sessionId: META_SESSION, status: "connected", provider: "meta_cloud", connectionType: "official",
+        phone: "5585999990091", displayName: "Loja Oficial" },
+    });
+    const qr = await call(keyA, "GET", `/sessions/${META_SESSION}/qr`);
+    expect(qr.statusCode).toBe(200);
+    expect(qr.json()).toMatchObject({ data: { qrCode: null, connectionType: "official" } });
+    // Tendi "connects" an existing session: nothing is created, the Meta connection stays.
+    const created = await call(keyA, "POST", "/sessions", { sessionId: META_SESSION });
+    expect(created.json()).toMatchObject({ success: true, status: "connected", connectionType: "official" });
+    const [count] = await sql<{ n: string }>(
+      "SELECT count(*) AS n FROM onconnect.connections WHERE client_id = $1 AND session_key = $2 AND deleted_at IS NULL",
+      [A, META_SESSION]);
+    expect(count?.n).toBe("1");
+  });
+
+  it("answers a send with the id the provider stored once it accepted", async () => {
+    const META_SESSION = "tendi-meta-0000-4000-8000-000000000091";
+    const pending = call(keyA, "POST", "/messages/send/text", { sessionId: META_SESSION, to: "5585999991111", text: "oi" });
+    // Plays the sessions process for a Meta send: the wamid arrives after the call started.
+    let stored = false;
+    for (let i = 0; i < 20 && !stored; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const rows = await sql<{ id: string }>(
+        `UPDATE onconnect.messages SET status = 'sent', provider_message_id = 'wamid.COMPAT1', sent_at = now()
+          WHERE client_id = $1 AND direction = 'outbound' AND counterpart = '5585999991111' AND status = 'queued'
+          RETURNING id`, [A]);
+      stored = rows.length > 0;
+    }
+    expect(stored).toBe(true);
+    const response = await pending;
+    expect(response.json()).toMatchObject({ success: true, messageId: "wamid.COMPAT1", data: { key: { id: "wamid.COMPAT1" } } });
+  });
 });

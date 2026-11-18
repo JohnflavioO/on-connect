@@ -85,3 +85,23 @@ confirmar a URL: não permite falsificar webhooks (isso exige o App Secret).
 | `meta_unreachable` | A Meta não respondeu (tenta de novo em 6 h ou em **Verificar na Meta**) |
 | `meta_190` | Token inválido ou expirado |
 | `meta_100`, `meta_10`, `meta_200` | `phone_number_id` não existe ou o token não tem acesso a ele |
+
+## Número oficial num workspace do Tendi (camada D-API)
+
+O Tendi fala com o On Connect pela camada compatível com a D-API, em que cada
+workspace é uma sessão `tendi-<id do workspace>`. Um número oficial entra nessa
+mesma sessão:
+
+1. No **Console do Tendi**, na ficha da empresa, em **Conexões › Número oficial**:
+   **Reservar sessão** (se ainda não houver WhatsApp) e **Copiar código**.
+2. No **painel do On Connect**, **Conexões › Nova conexão Meta**: escolha o cliente,
+   **Workspace do Tendi**, cole o código, informe `phone_number_id` e WABA. Se o
+   workspace já usa QR Code, marque **Substituir a conexão atual**: a conexão por QR é
+   encerrada (o número sai do WhatsApp Web) e o oficial entra no lugar, numa transação.
+3. O Tendi passa a ver a sessão como oficial: `GET /sessions/:id` e `GET .../qr`
+   respondem `connectionType: "official"` e `provider: "meta_cloud"` (campos a mais, que
+   clientes D-API ignoram); o QR vem `null`. O envio responde com o id da Meta (wamid),
+   o mesmo que chega depois nos status.
+
+Os avisos (`message.received`, `message.status`, `connection.status`) saem no formato
+D-API com o `sessionId` da sessão, como para as sessões por QR.

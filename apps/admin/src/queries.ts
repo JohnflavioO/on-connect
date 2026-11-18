@@ -172,6 +172,92 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
      * organization's connection limit; a phone number id lives in one
      * connection only (unique index).
      */
+    /**
+     * A Meta connection that a D-API integrator (Tendi) sees as its session
+     * `sessionKey`: the tenant is the session's (created with room for one
+     * connection, as the compat layer does) and the connection carries the
+     * session key. A live connection already in that session is refused,
+     * unless `replace` retires it (soft delete, audited): its ids come back
+     * so the caller logs the old WhatsApp Web socket out. One transaction.
+     */
+    async createMetaSession(admin: Admin, input: {
+      clientId: string; sessionKey: string; phoneNumberId: string; wabaId: string | null;
+      label: string | null; replace: boolean;
+    }): Promise<{ id: string; replaced: string[] } | { error: "client_not_found" | "session_in_use" | "number_in_use" }> {
+      const db = await pool.connect();
+      try {
+        await db.query("BEGIN");
+        const [client] = (await db.query<{ id: string }>(
+          "SELECT id FROM onconnect.clients WHERE id = $1 AND status = 'active'", [input.clientId])).rows;
+        if (!client) {
+          await db.query("ROLLBACK");
+          return { error: "client_not_found" };
+        }
+        await db.query(
+          `INSERT INTO onconnect.tenants (client_id, external_id, name, max_connections)
+           VALUES ($1, $2, $2, 1) ON CONFLICT (client_id, external_id) DO NOTHING`,
+          [input.clientId, input.sessionKey],
+        );
+        const [tenant] = (await db.query<{ id: string }>(
+          "SELECT id FROM onconnect.tenants WHERE client_id = $1 AND external_id = $2 FOR UPDATE",
+          [input.clientId, input.sessionKey])).rows;
+        // The session's live connections: the tenant's, or one elsewhere that
+        // already carries this session key.
+        const live = (await db.query<{ id: string }>(
+          `SELECT id FROM onconnect.connections
+            WHERE client_id = $1 AND deleted_at IS NULL
+              AND (tenant_id = $2 OR session_key = $3)
+            FOR UPDATE`,
+          [input.clientId, tenant?.id, input.sessionKey])).rows.map((row) => row.id);
+        if (live.length > 0 && !input.replace) {
+          await db.query("ROLLBACK");
+          return { error: "session_in_use" };
+        }
+        for (const id of live) {
+          await db.query(
+            `UPDATE onconnect.connections
+                SET deleted_at = now(), status = 'disconnected', status_reason = 'replaced_by_official',
+                    status_changed_at = now()
+              WHERE id = $1`,
+            [id],
+          );
+          await db.query(
+            `INSERT INTO onconnect.audit_log (client_id, actor_type, actor_id, action, target_type, target_id, metadata)
+             VALUES ($1, 'admin', $2, 'connection.deleted', 'connection', $3, $4)`,
+            [input.clientId, admin.name, id, JSON.stringify({ reason: "replaced_by_official", sessionId: input.sessionKey })],
+          );
+        }
+        let created: { id: string } | undefined;
+        try {
+          [created] = (await db.query<{ id: string }>(
+            `INSERT INTO onconnect.connections
+               (client_id, tenant_id, provider, label, status, status_reason, phone_number_id, waba_id, session_key)
+             VALUES ($1, $2, 'meta_cloud', $3, 'connecting', 'checking_meta', $4, $5, $6)
+             RETURNING id`,
+            [input.clientId, tenant?.id, input.label, input.phoneNumberId, input.wabaId, input.sessionKey])).rows;
+        } catch (error) {
+          await db.query("ROLLBACK");
+          if ((error as { code?: string }).code === "23505") return { error: "number_in_use" };
+          throw error;
+        }
+        if (!created) throw new Error("Meta session insert returned no row");
+        await db.query(
+          `INSERT INTO onconnect.audit_log (client_id, actor_type, actor_id, action, target_type, target_id, metadata)
+           VALUES ($1, 'admin', $2, 'connection.created', 'connection', $3, $4)`,
+          [input.clientId, admin.name, created.id, JSON.stringify({
+            provider: "meta_cloud", sessionId: input.sessionKey, phoneNumberId: input.phoneNumberId, replaced: live,
+          })],
+        );
+        await db.query("COMMIT");
+        return { id: created.id, replaced: live };
+      } catch (error) {
+        await db.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        db.release();
+      }
+    },
+
     async createMetaConnection(admin: Admin, input: {
       clientId: string; tenantExternalId: string; phoneNumberId: string; wabaId: string | null; label: string | null;
     }): Promise<{ id: string } | { error: "tenant_not_found" | "limit_reached" | "number_in_use" }> {
