@@ -133,6 +133,57 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
     }
   });
 
+  it("counts the previous period of the same length for the dashboard comparison", async () => {
+    const before = await queries.dashboard(7);
+    const inserted = await sql<{ id: string }>(
+      `INSERT INTO onconnect.messages
+         (client_id, tenant_id, connection_id, direction, status, message_type, counterpart, payload, created_at)
+       VALUES ($1, $2, $3, 'inbound', 'received', 'text', '5585999991111', '{}', now() - interval '8 days'),
+              ($1, $2, $3, 'inbound', 'received', 'text', '5585999991111', '{}', now() - interval '20 days')
+       RETURNING id`,
+      [CLIENT, TENANT, CONN],
+    );
+    try {
+      const after = await queries.dashboard(7);
+      // 8 days ago is in the previous 7 days; 20 days ago is in neither.
+      expect(Number(after.totals?.received_prev) - Number(before.totals?.received_prev)).toBe(1);
+      expect(after.totals?.received7).toBe(before.totals?.received7);
+    } finally {
+      await sql("DELETE FROM onconnect.messages WHERE id = ANY($1::uuid[])", [inserted.map((m) => m.id)]);
+    }
+  });
+
+  it("lists messages as metadata, filtered and paged, never the payload", async () => {
+    const all = await queries.messages({ connection: CONN });
+    expect(all.length).toBeGreaterThanOrEqual(3);
+    expect(all[0]).not.toHaveProperty("payload");
+    expect(all[0]).toMatchObject({ connection_id: CONN, session: "tendi-loja", client_slug: "admin-panel" });
+    const inbound = await queries.messages({ connection: CONN, direction: "inbound" });
+    expect(inbound.every((m) => m.direction === "inbound")).toBe(true);
+    expect((await queries.messages({ connection: CONN, status: "sent" })).every((m) => m.status === "sent")).toBe(true);
+    expect((await queries.messages({ search: "+55 (85) 99999-1111" })).length).toBeGreaterThanOrEqual(3);
+    expect((await queries.messages({ search: "admin-panel" })).length).toBeGreaterThanOrEqual(3);
+    expect(await queries.messages({ search: "99999" })).toEqual([]);
+    expect(await queries.messages({ connection: CONN, page: 9999 })).toEqual([]);
+  });
+
+  it("searches connections, clients and endpoints by name, number and host", async () => {
+    const byClient = await queries.search("Painel");
+    expect(byClient.clients.map((c) => c.id)).toEqual([CLIENT]);
+    const byNumber = await queries.search("99990000");
+    expect(byNumber.connections.map((c) => c.id)).toEqual([CONN]);
+    const byHost = await queries.search("hooks.example");
+    expect(byHost.endpoints.map((e) => e.id)).toContain(ENDPOINT);
+    // The path is not searchable: it may carry the integrator's secret.
+    expect((await queries.search("/x")).endpoints).toEqual([]);
+  });
+
+  it("reads the last 24 hours of totals for the alerts bell", async () => {
+    const totals = await queries.alertTotals();
+    expect(Number(totals?.live)).toBeGreaterThanOrEqual(1);
+    expect(Number(totals?.disabled_endpoints)).toBeGreaterThanOrEqual(1);
+  });
+
   it("shows a client with tenants and keys, and refuses a duplicate slug", async () => {
     expect(await queries.createClient(admin, "admin-panel", "Dup")).toBeNull();
     const created = await queries.createClient(admin, "admin-panel-2", "Outro");

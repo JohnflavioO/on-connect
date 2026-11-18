@@ -50,7 +50,7 @@ function conexaoTab(row: Connection): Html {
         <table class="kv">
           <tr><th>Cliente</th><td><a href="/admin/clients/${row.client_id}">${row.client_slug}</a></td></tr>
           <tr><th>Organização</th><td class="mono">${row.tenant}</td></tr>
-          <tr><th>Últimos 7 dias</th><td>${formatNumber(row.sent7)} enviadas · ${formatNumber(row.received7)} recebidas</td></tr>
+          <tr><th>Últimos 7 dias</th><td>${formatNumber(row.sent7)} enviadas · ${formatNumber(row.received7)} recebidas · <a href="/admin/messages?connection=${row.id}">ver mensagens</a></td></tr>
         </table>
         <h2>Ações</h2>
         ${action("restart", "Reiniciar", "Reabre a sessão sem desconectar o número; se não estiver conectada, gera um QR novo.", "Reiniciar esta conexão?")}
