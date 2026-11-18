@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import QRCode from "qrcode";
 import type { AdminAuth } from "./admin-auth.js";
 import { PUBLIC_CSS } from "./public-css.js";
+import { documentationPage } from "./documentation-page.js";
 import { landingPage, loginPage } from "./public-pages.js";
 import { CSS, JS } from "./assets.js";
 import { FAVICON_SVG, ICON_PNG, LOGO_PNG } from "./brand.js";
@@ -93,7 +94,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
       }
     }
     const path = request.url.split("?", 1)[0];
-    if (path === "/" || path === "/admin/login" || path === "/assets/on-connect.css"
+    if (path === "/" || path === "/docs" || path === "/admin/login" || path === "/assets/on-connect.css"
       || path === "/admin/assets/admin.css" || path === "/admin/assets/logo.png"
       || path === "/admin/assets/icon.png" || path === "/admin/assets/favicon.svg") return undefined;
     if (!(await auth.authenticated(request.headers.cookie))) {
@@ -155,6 +156,8 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
   app.get("/admin/assets/icon.png", async (_request, reply) => reply.type("image/png").send(ICON_PNG));
   app.get("/admin/assets/favicon.svg", async (_request, reply) => reply.type("image/svg+xml").send(FAVICON_SVG));
   app.get("/", async (_request, reply) => reply.type("text/html; charset=utf-8").send(landingPage()));
+  app.get("/docs", async (_request, reply) =>
+    reply.type("text/html; charset=utf-8").send(documentationPage(origin)));
   app.get("/assets/on-connect.css", async (_request, reply) =>
     reply.type("text/css; charset=utf-8").send(PUBLIC_CSS));
   app.get("/admin/login", async (request, reply) => {
