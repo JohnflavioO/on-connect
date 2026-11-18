@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAdminAuth } from "../src/admin-auth.js";
 import { buildAdminApp } from "../src/app.js";
 import { escapeHtml, formatPhone, maskUrl } from "../src/html.js";
+import { trend } from "../src/dashboard.js";
+import { maskPhone } from "../src/messages-page.js";
 import { ago, evaluateHealth } from "../src/monitoring.js";
 import type { AdminQueries, MonitoringTotals } from "../src/queries.js";
 
@@ -26,7 +28,7 @@ const connection = {
 function fakeQueries() {
   return {
     dashboard: vi.fn<AdminQueries["dashboard"]>(async () => ({
-      totals: { connected: "1", live: "2", clients: "1", tenants: "3", sent7: "86", received7: "81",
+      totals: { connected: "1", live: "2", clients: "1", tenants: "3", sent7: "86", received7: "81", sent_prev: "40", received_prev: "90",
         pending: "0", dead24: "2", disabled: "0" },
       days: [{ day: "2026-11-17", sent: "10", received: "4" }],
     })),
@@ -74,6 +76,17 @@ function fakeQueries() {
       : null),
     pauseEndpoint: vi.fn(async () => true),
     setEndpointEvents: vi.fn(async (_admin: unknown, id: string) => id === NATIVE),
+    alertTotals: vi.fn<AdminQueries["alertTotals"]>(async () => healthyTotals({ live: "2", connected: "1" })),
+    messages: vi.fn<AdminQueries["messages"]>(async () => [{
+      id: KEY, created_at: new Date("2026-11-17T12:00:00Z"), direction: "inbound", status: "received",
+      message_type: "image", counterpart: "5585999132494", error_code: null, connection_id: CONN,
+      session: "tendi-org-1", client_slug: "tendi",
+    }]),
+    search: vi.fn<AdminQueries["search"]>(async () => ({
+      connections: [connection],
+      clients: [{ id: CLIENT, slug: "tendi", name: "Tendi", status: "active" }],
+      endpoints: [{ id: KEY, client_slug: "tendi", tenant: null, url: "https://tendi.example.com/api/webhooks/dapi/s3cr3t", status: "active" }],
+    })),
     monitoring: vi.fn<AdminQueries["monitoring"]>(async () => ({
       totals: healthyTotals({ live: "2", connected: "1", dead: "1", delivered: "40", disabled_endpoints: "1" }),
       buckets: [
@@ -599,6 +612,87 @@ describe("monitoring", () => {
     expect(week.body).not.toContain("data-autorefresh");
     await instance.inject({ method: "GET", url: "/admin/monitoring?period=toString", headers: viaCaddy });
     expect(queries.monitoring).toHaveBeenLastCalledWith("1h");
+  });
+});
+
+describe("dashboard package 1", () => {
+  it("compares the message cards with the previous period", async () => {
+    const response = await (await start()).inject({ method: "GET", url: "/admin", headers: viaCaddy });
+    expect(response.body).toContain('<span class="metric-trend up">+115%</span>');
+    expect(response.body).toContain('<span class="metric-trend down">−10%</span>');
+    expect(response.body).toContain("/admin/messages?direction=outbound");
+  });
+
+  it("works out the trend text for edge cases", () => {
+    expect(trend(0, 0)).toEqual({ text: "sem movimento", tone: "flat" });
+    expect(trend(5, 0)).toEqual({ text: "novo no período", tone: "up" });
+    expect(trend(101, 14)).toEqual({ text: "+621,4%", tone: "up" });
+    expect(trend(3, 3)).toEqual({ text: "0%", tone: "flat" });
+  });
+
+  it("lists messages as metadata with the number partly hidden", async () => {
+    const instance = await start();
+    const response = await instance.inject({
+      method: "GET", url: `/admin/messages?direction=inbound&status=received&connection=${CONN}&q=%2B55%2085%2099913-2494&page=2`, headers: viaCaddy,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(queries.messages).toHaveBeenCalledWith({
+      direction: "inbound", status: "received", connection: CONN, search: "+55 85 99913-2494", page: 2,
+    });
+    expect(response.body).toContain("+55 (85) •••••-2494");
+    expect(response.body).not.toContain("5585999132494");
+    expect(response.body).toContain("Imagem");
+  });
+
+  it("drops unknown message filters instead of passing them to SQL", async () => {
+    const instance = await start();
+    await instance.inject({ method: "GET", url: "/admin/messages?direction=sideways&status=lost&connection=x&page=0", headers: viaCaddy });
+    expect(queries.messages).toHaveBeenCalledWith({
+      direction: undefined, status: undefined, connection: undefined, search: undefined, page: 1,
+    });
+  });
+
+  it("masks numbers of any country", () => {
+    expect(maskPhone("5585999132494")).toBe("+55 (85) •••••-2494");
+    expect(maskPhone("447911123456")).toBe("+44••••••3456");
+    expect(maskPhone("12345")).toBe("+•••••");
+  });
+
+  it("searches connections, clients and endpoints without showing the webhook path", async () => {
+    const instance = await start();
+    const response = await instance.inject({ method: "GET", url: "/admin/search?q=tendi", headers: viaCaddy });
+    expect(response.statusCode).toBe(200);
+    expect(queries.search).toHaveBeenCalledWith("tendi");
+    expect(response.body).toContain("/admin/connections/" + CONN);
+    expect(response.body).toContain("/admin/clients/" + CLIENT);
+    expect(response.body).toContain("/admin/webhooks/endpoints/" + KEY);
+    expect(response.body).not.toContain("s3cr3t");
+    expect(response.body).toContain('value="tendi"');
+  });
+
+  it("does not search for a single character", async () => {
+    const instance = await start();
+    const response = await instance.inject({ method: "GET", url: "/admin/search?q=t", headers: viaCaddy });
+    expect(response.statusCode).toBe(200);
+    expect(queries.search).not.toHaveBeenCalled();
+    expect(response.body).toContain("Digite o que procura.");
+  });
+
+  it("shows the alerts bell with the count on every page", async () => {
+    const instance = await start();
+    const response = await instance.inject({ method: "GET", url: "/admin/clients", headers: viaCaddy });
+    expect(response.body).toContain('class="alerts-menu"');
+    expect(response.body).toContain('<span class="alerts-count warn">1</span>');
+    expect(response.body).toContain("1 de 2 conexões estão fora do ar.");
+    expect(response.body).toContain("data-global-search");
+  });
+
+  it("keeps the page working when the alerts cannot be read", async () => {
+    const instance = await start();
+    queries.alertTotals.mockRejectedValue(new Error("db down"));
+    const response = await instance.inject({ method: "GET", url: "/admin/clients", headers: viaCaddy });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("Não foi possível ler os alertas agora.");
   });
 });
 
