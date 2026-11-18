@@ -69,6 +69,10 @@ export const connectionRoutes: FastifyPluginAsync<ConnectionRouteOptions> = asyn
 
   const alreadyConnected = (request: FastifyRequest, reply: FastifyReply) =>
     problem(request, reply, 409, "already_connected", "Connection is already linked");
+  // QR and pairing codes exist only for WhatsApp Web; a Meta number is linked at Meta.
+  const noQr = (request: FastifyRequest, reply: FastifyReply) =>
+    problem(request, reply, 409, "not_supported_for_provider",
+      "This connection uses the Meta Cloud API: it has no QR or pairing code");
 
   app.post<{ Params: { externalId: string }; Body: { label?: string | null } | undefined }>(
     "/tenants/:externalId/connections",
@@ -128,6 +132,7 @@ export const connectionRoutes: FastifyPluginAsync<ConnectionRouteOptions> = asyn
     async (request, reply) => {
       const connection = await load(request, request.params.id);
       if (!connection) return notFound(request, reply);
+      if (connection.provider !== "whatsapp_web") return noQr(request, reply);
       if (connection.status === "connected") return alreadyConnected(request, reply);
       const qr = await sessions.currentQr(connection.id);
       if (!qr) {
@@ -172,6 +177,7 @@ export const connectionRoutes: FastifyPluginAsync<ConnectionRouteOptions> = asyn
     async (request, reply) => {
       const connection = await load(request, request.params.id);
       if (!connection) return notFound(request, reply);
+      if (connection.provider !== "whatsapp_web") return noQr(request, reply);
       if (connection.status === "connected") return alreadyConnected(request, reply);
       const code = await sessions.requestPairingCode(connection.id, request.body.phoneNumber);
       if (!code) {

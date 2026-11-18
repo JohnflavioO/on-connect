@@ -351,4 +351,32 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
       "SELECT actor_id FROM onconnect.audit_log WHERE action = 'connection.deleted' AND target_id = $1", [CONN]);
     expect(audit?.actor_id).toBe("john");
   });
+  it("creates a Meta connection within the organization limit, once per phone number id", async () => {
+    await sql(
+      "INSERT INTO onconnect.tenants (client_id, external_id, name, max_connections) VALUES ($1, 'meta-loja', 'Meta', 1)",
+      [CLIENT],
+    );
+    const input = { clientId: CLIENT, tenantExternalId: "meta-loja", phoneNumberId: "106540352242922",
+      wabaId: "200000000000001", label: "Oficial" };
+    const created = await queries.createMetaConnection(admin, input);
+    expect(created).toHaveProperty("id");
+    const id = "id" in created ? created.id : "";
+    const [row] = await sql<Record<string, unknown>>(
+      "SELECT provider, status, status_reason, phone_number_id, waba_id, label FROM onconnect.connections WHERE id = $1", [id]);
+    expect(row).toEqual({ provider: "meta_cloud", status: "connecting", status_reason: "checking_meta",
+      phone_number_id: "106540352242922", waba_id: "200000000000001", label: "Oficial" });
+    const [audit] = await sql<{ actor_id: string; provider: string }>(
+      `SELECT actor_id, metadata ->> 'provider' AS provider FROM onconnect.audit_log
+        WHERE action = 'connection.created' AND target_id = $1`, [id]);
+    expect(audit).toEqual({ actor_id: "john", provider: "meta_cloud" });
+
+    expect(await queries.createMetaConnection(admin, { ...input, phoneNumberId: "999999999" }))
+      .toEqual({ error: "limit_reached" });
+    expect(await queries.createMetaConnection(admin, { ...input, tenantExternalId: "nope" }))
+      .toEqual({ error: "tenant_not_found" });
+    await sql("UPDATE onconnect.tenants SET max_connections = 5 WHERE client_id = $1 AND external_id = 'meta-loja'", [CLIENT]);
+    expect(await queries.createMetaConnection(admin, input)).toEqual({ error: "number_in_use" });
+    const one = await queries.connection(id);
+    expect(one).toMatchObject({ provider: "meta_cloud", phone_number_id: "106540352242922", quality_rating: null });
+  });
 });

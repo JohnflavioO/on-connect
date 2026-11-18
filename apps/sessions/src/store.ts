@@ -12,6 +12,27 @@ export interface SessionRow {
   provider: string;
   status: ConnectionStatus;
   deleted: boolean;
+  /** Meta connections only. */
+  phoneNumberId: string | null;
+}
+
+/** What Meta reports about a phone number (GET /{phone-number-id}). */
+export interface MetaNumberInfo {
+  displayPhoneNumber: string | null;
+  verifiedName: string | null;
+  qualityRating: string | null;
+  messagingLimitTier: string | null;
+}
+
+/** Meta Cloud API connections, also written as onconnect_system. */
+export interface MetaConnectionStore {
+  /** The live Meta connection of a phone number id, or null. */
+  metaConnectionId(phoneNumberId: string): Promise<string | null>;
+  markMetaConnected(connectionId: string, info: MetaNumberInfo): Promise<void>;
+  /** Meta connections to check periodically (not retired, not stopped by hand). */
+  metaCheckIds(): Promise<string[]>;
+  /** Whether an outbound message with this provider id is stored. */
+  knowsOutbound(connectionId: string, providerMessageId: string): Promise<boolean>;
 }
 
 /** Durable connection state, written with the onconnect_system role. */
@@ -31,6 +52,9 @@ export interface SessionStore {
 export interface OutboundMessage {
   id: string;
   connectionId: string;
+  provider: string;
+  /** Meta connections only. */
+  phoneNumberId: string | null;
   status: string;
   to: string;
   content: OutboundContent;
@@ -40,9 +64,13 @@ export interface OutboundMessage {
 /** Outbox side of outbound sends, also written as onconnect_system. */
 export interface OutboundStore {
   load(messageId: string): Promise<OutboundMessage | null>;
-  /** Records the WhatsApp id before the send, so a retry reuses it. */
-  markSending(messageId: string, providerMessageId: string): Promise<void>;
-  markSent(messageId: string): Promise<void>;
+  /**
+   * Records the WhatsApp id before the send, so a retry reuses it. Null for
+   * Meta, which assigns the id only when it accepts the message.
+   */
+  markSending(messageId: string, providerMessageId: string | null): Promise<void>;
+  /** With Meta's id when it was only known after the send. */
+  markSent(messageId: string, providerMessageId?: string | null): Promise<void>;
   markFailed(messageId: string, code: string, detail: string): Promise<void>;
   /** Jobs still pending after `olderThanSeconds`: their queue entry may be lost. */
   stalePending(olderThanSeconds: number): Promise<string[]>;
@@ -71,7 +99,9 @@ export interface SessionBehaviorStore {
   recordReadReceipts(connectionId: string, ids: string[]): Promise<void>;
 }
 
-export function createPostgresSessionStore(pool: DatabasePool): SessionStore & SessionBehaviorStore {
+export function createPostgresSessionStore(
+  pool: DatabasePool,
+): SessionStore & SessionBehaviorStore & MetaConnectionStore {
   const run = async <Row>(sql: string, params: readonly unknown[]) => {
     const connection = await pool.connect();
     try {
@@ -83,12 +113,51 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore & S
 
   return {
     async load(connectionId) {
-      const result = await run<{ id: string; provider: string; status: ConnectionStatus; deleted: boolean }>(
-        `SELECT id, provider, status, deleted_at IS NOT NULL AS deleted
+      const result = await run<{
+        id: string; provider: string; status: ConnectionStatus; deleted: boolean; phone_number_id: string | null;
+      }>(
+        `SELECT id, provider, status, deleted_at IS NOT NULL AS deleted, phone_number_id
            FROM onconnect.connections WHERE id = $1`,
         [connectionId],
       );
-      return result.rows[0] ?? null;
+      const row = result.rows[0];
+      return row
+        ? { id: row.id, provider: row.provider, status: row.status, deleted: row.deleted, phoneNumberId: row.phone_number_id }
+        : null;
+    },
+
+    async metaConnectionId(phoneNumberId) {
+      const result = await run<{ id: string }>(
+        `SELECT id FROM onconnect.connections
+          WHERE provider = 'meta_cloud' AND phone_number_id = $1 AND deleted_at IS NULL`,
+        [phoneNumberId],
+      );
+      return result.rows[0]?.id ?? null;
+    },
+
+    async markMetaConnected(connectionId, info) {
+      const digits = info.displayPhoneNumber?.replace(/\D/g, "") ?? "";
+      await run(
+        `UPDATE onconnect.connections
+            SET status = 'connected', status_reason = NULL,
+                status_changed_at = CASE WHEN status <> 'connected' THEN now() ELSE status_changed_at END,
+                display_phone_number = coalesce($2, display_phone_number),
+                verified_name = coalesce($3, verified_name),
+                quality_rating = $4, messaging_limit_tier = $5, last_health_check_at = now()
+          WHERE id = $1 AND provider = 'meta_cloud' AND deleted_at IS NULL`,
+        [connectionId, /^[0-9]{5,20}$/.test(digits) ? digits : null, info.verifiedName,
+          info.qualityRating, info.messagingLimitTier],
+      );
+    },
+
+    async metaCheckIds() {
+      const result = await run<{ id: string }>(
+        `SELECT id FROM onconnect.connections
+          WHERE provider = 'meta_cloud' AND deleted_at IS NULL AND status <> 'disconnected'
+          ORDER BY created_at`,
+        [],
+      );
+      return result.rows.map((row) => row.id);
     },
 
     async loadSettings(connectionId) {
@@ -138,6 +207,16 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore & S
         [],
       );
       return result.rows.map((row) => row.id);
+    },
+
+    async knowsOutbound(connectionId, providerMessageId) {
+      const result = await run<{ found: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM onconnect.messages
+                         WHERE connection_id = $1 AND provider_message_id = $2
+                           AND direction = 'outbound') AS found`,
+        [connectionId, providerMessageId],
+      );
+      return result.rows[0]?.found === true;
     },
 
     async setStatus(connectionId, status, reason) {
@@ -236,6 +315,7 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore & S
         `WITH m AS (
            UPDATE onconnect.messages m
               SET status = $3,
+                  error_code = CASE WHEN $3 = 'failed' THEN coalesce($4, m.error_code) ELSE m.error_code END,
                   sent_at = CASE WHEN $3 = 'sent' THEN coalesce(m.sent_at, now()) ELSE m.sent_at END,
                   delivered_at = CASE WHEN $3 IN ('delivered', 'read')
                                       THEN coalesce(m.delivered_at, now()) ELSE m.delivered_at END,
@@ -254,12 +334,13 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore & S
                 'message.status:' || id || ':' || $3,
                 jsonb_build_object('messageId', id, 'connectionId', connection_id,
                                    'clientReference', client_reference, 'status', $3::text,
-                                   'providerMessageId', provider_message_id),
+                                   'providerMessageId', provider_message_id)
+                  || CASE WHEN $4::text IS NOT NULL THEN jsonb_build_object('error', $4::text) ELSE '{}'::jsonb END,
                 now()
            FROM m
          ON CONFLICT (client_id, dedupe_key) DO NOTHING
          RETURNING id`,
-        [connectionId, update.providerId, update.status],
+        [connectionId, update.providerId, update.status, update.errorCode ?? null],
       );
       return result.rows.length > 0;
     },
@@ -281,10 +362,13 @@ export function createPostgresOutboundStore(pool: DatabasePool): OutboundStore {
       const result = await run<{
         id: string; connection_id: string; status: string; counterpart: string;
         content: OutboundContent | null; provider_message_id: string | null;
+        provider: string; phone_number_id: string | null;
       }>(
-        `SELECT id, connection_id, status, counterpart, payload -> 'content' AS content,
-                provider_message_id
-           FROM onconnect.messages WHERE id = $1 AND direction = 'outbound'`,
+        `SELECT m.id, m.connection_id, m.status, m.counterpart, m.payload -> 'content' AS content,
+                m.provider_message_id, c.provider, c.phone_number_id
+           FROM onconnect.messages m
+           JOIN onconnect.connections c ON c.id = m.connection_id
+          WHERE m.id = $1 AND m.direction = 'outbound'`,
         [messageId],
       );
       const row = result.rows[0];
@@ -292,6 +376,8 @@ export function createPostgresOutboundStore(pool: DatabasePool): OutboundStore {
       return {
         id: row.id,
         connectionId: row.connection_id,
+        provider: row.provider,
+        phoneNumberId: row.phone_number_id,
         status: row.status,
         to: row.counterpart,
         content: row.content ?? { type: "text", text: "" },
@@ -313,13 +399,14 @@ export function createPostgresOutboundStore(pool: DatabasePool): OutboundStore {
       );
     },
 
-    async markSent(messageId) {
+    async markSent(messageId, providerMessageId = null) {
       // An event may already have moved it past "sent"; never move it back.
       await run(
         `WITH m AS (
            UPDATE onconnect.messages
               SET status = CASE WHEN status IN ('queued', 'sending') THEN 'sent' ELSE status END,
-                  sent_at = coalesce(sent_at, now())
+                  sent_at = coalesce(sent_at, now()),
+                  provider_message_id = coalesce($2, provider_message_id)
             WHERE id = $1
            RETURNING id, client_id, tenant_id, connection_id, client_reference, provider_message_id
          ), j AS (
@@ -335,7 +422,7 @@ export function createPostgresOutboundStore(pool: DatabasePool): OutboundStore {
                 now()
            FROM m
          ON CONFLICT (client_id, dedupe_key) DO NOTHING`,
-        [messageId],
+        [messageId, providerMessageId],
       );
     },
 

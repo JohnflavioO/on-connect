@@ -83,6 +83,9 @@ services:
       API_KEY_PEPPER: ${API_KEY_PEPPER:?set API_KEY_PEPPER in deploy/.env}
       WEBHOOK_SECRET_KEY: ${WEBHOOK_SECRET_KEY:?set WEBHOOK_SECRET_KEY in deploy/.env}
       MEDIA_KEY: ${MEDIA_KEY:?set MEDIA_KEY in deploy/.env}
+      # Meta Cloud API webhooks (/webhooks/meta). Optional: empty disables the route.
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_VERIFY_TOKEN: ${META_VERIFY_TOKEN:-}
     volumes:
       # Supabase signs its database certificates with its own root CA, which
       # Node does not trust by default. DATABASE_URL points sslrootcert here
@@ -133,6 +136,9 @@ services:
       MEDIA_RETENTION_DAYS: ${MEDIA_RETENTION_DAYS:-90}
       # Media links handed to integrators point at the API.
       PUBLIC_API_BASE_URL: https://${API_DOMAIN}
+      # Meta Cloud API sends. Optional: without it Meta connections stay in error.
+      META_ACCESS_TOKEN: ${META_ACCESS_TOKEN:-}
+      META_GRAPH_VERSION: ${META_GRAPH_VERSION:-v23.0}
     volumes:
       - ./supabase-ca.crt:/run/certs/supabase-ca.crt:ro
       - media_data:/data/media

@@ -19,10 +19,18 @@ const KEY = "33333333-3333-4333-8333-333333333333";
 const NATIVE = "44444444-4444-4444-8444-444444444444";
 
 const connection = {
-  id: CONN, session_key: "tendi-org-1", status: "connecting", status_reason: "waiting_for_scan",
+  id: CONN, session_key: "tendi-org-1" as string | null, status: "connecting", status_reason: "waiting_for_scan" as string | null,
   status_changed_at: new Date("2026-11-17T12:00:00Z"), display_phone_number: "5585999132494",
   verified_name: "<b>Loja</b>", tenant: "tendi-org-1", client_slug: "tendi", client_id: CLIENT,
   provider: "whatsapp_web", reject_calls: true, read_on_reply: false, sent7: "3", received7: "5", label: null, created_at: new Date(),
+  phone_number_id: null as string | null, waba_id: null as string | null, quality_rating: null as string | null,
+  messaging_limit_tier: null as string | null, last_health_check_at: null as Date | null,
+};
+const META_CONN = "55555555-5555-4555-8555-555555555555";
+const metaConnection = {
+  ...connection, id: META_CONN, session_key: null, provider: "meta_cloud", status: "connected", status_reason: null,
+  phone_number_id: "106540352242922", waba_id: "200000000000001", quality_rating: "YELLOW",
+  messaging_limit_tier: "TIER_1K", last_health_check_at: new Date("2026-11-18T12:00:00Z"),
 };
 
 function fakeQueries() {
@@ -35,7 +43,7 @@ function fakeQueries() {
     connections: vi.fn(async () => [connection]),
     connection: vi.fn(async (id: string) => (id === CONN ? connection : null)),
     auditConnection: vi.fn(async () => []),
-    clients: vi.fn(async () => []),
+    clients: vi.fn<AdminQueries["clients"]>(async () => []),
     client: vi.fn(async (id: string) => id === CLIENT
       ? {
           client: { id: CLIENT, slug: "tendi", name: "Tendi", status: "active", created_at: new Date() },
@@ -64,6 +72,7 @@ function fakeQueries() {
       last_error: null, updated_at: new Date("2026-11-17T12:01:00Z"),
     }]),
     deleteConnection: vi.fn(async () => true),
+    createMetaConnection: vi.fn<AdminQueries["createMetaConnection"]>(async () => ({ id: META_CONN })),
     updateConnectionBehavior: vi.fn(async () => true),
     webhookEndpoint: vi.fn(async (id: string) => id === KEY || id === NATIVE
       ? {
@@ -444,6 +453,61 @@ describe("pages", () => {
     expect((await instance.inject({ method: "GET", url: "/admin/connections/not-a-uuid", headers: viaCaddy })).statusCode).toBe(404);
     expect((await instance.inject({ method: "GET", url: `/admin/clients/${CONN}`, headers: viaCaddy })).statusCode).toBe(404);
     expect((await instance.inject({ method: "GET", url: "/admin/nothing", headers: viaCaddy })).statusCode).toBe(404);
+  });
+});
+
+describe("Meta connections", () => {
+  it("shows the form with active clients and no token field", async () => {
+    const instance = await start();
+    queries.clients.mockResolvedValue([{ id: CLIENT, slug: "tendi", name: "Tendi", status: "active",
+      created_at: new Date(), tenants: "1", live: "1", connected: "1", keys: "1" }]);
+    const response = await instance.inject({ url: "/admin/connections/new-meta", headers: viaCaddy });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain(`<option value="${CLIENT}">Tendi (tendi)</option>`);
+    expect(response.body).toContain('name="phoneNumberId"');
+    expect(response.body).not.toMatch(/name="(token|accessToken)"/);
+  });
+
+  it("creates the connection, then asks the sessions process to check it", async () => {
+    const instance = await start();
+    const response = await post(instance, "/admin/connections/meta",
+      `clientId=${CLIENT}&tenant=tendi-org-1&phoneNumberId=106540352242922&wabaId=200000000000001&label=Oficial`);
+    expect(response.statusCode).toBe(303);
+    expect(response.headers.location).toContain(`/admin/connections/${META_CONN}?ok=`);
+    expect(queries.createMetaConnection).toHaveBeenCalledWith({ name: "john" }, {
+      clientId: CLIENT, tenantExternalId: "tendi-org-1", phoneNumberId: "106540352242922",
+      wabaId: "200000000000001", label: "Oficial",
+    });
+    expect(sessions.start).toHaveBeenCalledWith(META_CONN);
+  });
+
+  it("refuses bad ids before the database and explains database refusals", async () => {
+    const instance = await start();
+    for (const body of [`clientId=x&tenant=t&phoneNumberId=1065`, `clientId=${CLIENT}&tenant=t&phoneNumberId=12ab345`,
+      `clientId=${CLIENT}&tenant=&phoneNumberId=106540352242922`]) {
+      const response = await post(instance, "/admin/connections/meta", body);
+      expect(response.headers.location).toContain("/admin/connections/new-meta?ok=");
+    }
+    expect(queries.createMetaConnection).not.toHaveBeenCalled();
+
+    queries.createMetaConnection.mockResolvedValueOnce({ error: "number_in_use" });
+    const taken = await post(instance, "/admin/connections/meta", `clientId=${CLIENT}&tenant=t&phoneNumberId=106540352242922`);
+    expect(decodeURIComponent(String(taken.headers.location))).toContain("já está em outra conexão");
+    expect(sessions.start).not.toHaveBeenCalled();
+  });
+
+  it("shows Meta's data instead of a QR, and Meta-specific actions", async () => {
+    const instance = await start();
+    queries.connection.mockImplementation(async (id: string) => (id === META_CONN ? metaConnection : null));
+    const response = await instance.inject({ url: `/admin/connections/${META_CONN}`, headers: viaCaddy });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("106540352242922");
+    expect(response.body).toContain("Verificar na Meta");
+    expect(response.body).toContain('<span class="badge warn">Média</span>');
+    expect(response.body).not.toContain("data-qr-url");
+    const qr = await instance.inject({ url: `/admin/connections/${META_CONN}/qr.json`, headers: viaCaddy });
+    expect(qr.json()).toMatchObject({ qrImage: null });
+    expect(sessions.currentQr).not.toHaveBeenCalled();
   });
 });
 

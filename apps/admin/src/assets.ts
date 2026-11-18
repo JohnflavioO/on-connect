@@ -239,6 +239,8 @@ main {
   margin: 0 10px;
 }
 .top-actions { display: flex; align-items: center; gap: 10px; }
+.steps { margin: 0 0 16px; padding-left: 18px; font-size: 12px; line-height: 1.7; color: var(--muted); }
+.steps strong { color: var(--text); }
 .console-badge {
   display: flex;
   align-items: center;

@@ -33,7 +33,10 @@ export const REDACTED_LOG_PATHS: readonly string[] = [
  * are logged without their token.
  */
 export function redactUrl(url: string): string {
-  return url.replace(/^\/media\/[^/?#]+/, "/media/[REDACTED]");
+  return url
+    .replace(/^\/media\/[^/?#]+/, "/media/[REDACTED]")
+    // Meta's subscription check carries the verify token in the query.
+    .replace(/^(\/webhooks\/meta)\?.*/, "$1?[REDACTED]");
 }
 
 export interface LoggerConfig {

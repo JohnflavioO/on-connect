@@ -12,6 +12,7 @@ import {
   fetchPublicBytes,
   sessionKeys,
   loadSessionsEnv,
+  type MetaWebhookJob,
   type OutboundJob,
   type SessionCommand,
 } from "@on-connect/core";
@@ -19,6 +20,8 @@ import { Worker } from "bullmq";
 import { createRedisAuthState } from "./auth-state.js";
 import { guardConsole } from "./console-guard.js";
 import { createBaileysSocketFactory, resolveWaVersion } from "./baileys-socket.js";
+import { createMetaGraph } from "./meta-graph.js";
+import { StatusesPendingError, createMetaProvider } from "./meta-provider.js";
 import { SessionManager } from "./session-manager.js";
 import { createOutboundProcessor } from "./outbound.js";
 import { createPostgresOutboundStore, createPostgresSessionStore } from "./store.js";
@@ -63,6 +66,18 @@ async function main(): Promise<void> {
     media,
   });
 
+  // Meta Cloud API connections: no socket, the Graph API with one token.
+  const meta = createMetaProvider({
+    graph: env.META_ACCESS_TOKEN
+      ? createMetaGraph({ token: env.META_ACCESS_TOKEN, version: env.META_GRAPH_VERSION })
+      : null,
+    store,
+    media,
+    maxMediaBytes: env.MEDIA_MAX_BYTES,
+    logger,
+  });
+  const isMeta = async (connectionId: string) => (await store.load(connectionId))?.provider === "meta_cloud";
+
   // Retention: whole months of media older than MEDIA_RETENTION_DAYS go.
   const prune = async (): Promise<void> => {
     try {
@@ -81,9 +96,13 @@ async function main(): Promise<void> {
       const command = job.data;
       switch (command.type) {
         case "start":
-          return manager.start(command.connectionId);
+          return (await isMeta(command.connectionId))
+            ? meta.check(command.connectionId)
+            : manager.start(command.connectionId);
         case "logout":
-          return manager.logout(command.connectionId);
+          return (await isMeta(command.connectionId))
+            ? meta.stop(command.connectionId)
+            : manager.logout(command.connectionId);
         case "pairing-code":
           return manager.requestPairingCode(command.connectionId, command.phoneNumber);
         case "profile-picture": {
@@ -111,6 +130,7 @@ async function main(): Promise<void> {
     sender: manager,
     fetchMedia: (url) => fetchPublicBytes(url, { maxBytes: env.MEDIA_MAX_BYTES, timeoutMs: 30_000 }),
     logger,
+    meta: meta.sender,
   });
   const outboundWorker = new Worker<OutboundJob>(
     QUEUE_NAMES.outbound,
@@ -125,6 +145,30 @@ async function main(): Promise<void> {
     logger.warn({ messageId: job?.data.messageId, attempt: job?.attemptsMade, err: error.message },
       "outbound attempt failed");
   });
+
+  // Signed Meta webhooks queued by the API. The job holds the body (message
+  // content), so failures are logged with ids only.
+  const metaConnection = createRedis({ url: env.REDIS_URL, connectionName: "sessions:meta", logger });
+  const metaWorker = new Worker<MetaWebhookJob>(
+    QUEUE_NAMES.metaWebhooks,
+    (job) => meta.handleWebhook(job.data.payload),
+    { connection: metaConnection, prefix: QUEUE_PREFIX, concurrency: 5 },
+  );
+  metaWorker.on("failed", (job, error) => {
+    const level = error instanceof StatusesPendingError ? "info" : "error";
+    logger[level]({ jobId: job?.id, attempt: job?.attemptsMade, err: error.message }, "meta webhook not stored yet");
+  });
+
+  // Meta numbers are checked again every 6 hours (name, quality, tier, token).
+  const checkMeta = async (): Promise<void> => {
+    try {
+      for (const id of await store.metaCheckIds()) await meta.check(id);
+    } catch (error) {
+      logger.error({ err: error }, "meta number check failed");
+    }
+  };
+  const metaTimer = setInterval(() => void checkMeta(), 6 * 3_600_000);
+  metaTimer.unref();
 
   // Transactional outbox replay: a message whose queue job was lost (Redis
   // restart, API crash after commit) is enqueued again. The job id is the
@@ -156,12 +200,13 @@ async function main(): Promise<void> {
     // Sockets are closed, not logged out, so the next boot resumes them.
     clearInterval(replayTimer);
     clearInterval(pruneTimer);
-    Promise.all([worker.close(), outboundWorker.close(), outboundQueue.close()])
+    clearInterval(metaTimer);
+    Promise.all([worker.close(), outboundWorker.close(), outboundQueue.close(), metaWorker.close()])
       .then(() => {
         manager.stopAll();
       })
       .then(() => db.close())
-      .then(() => Promise.all([redis.quit(), commandConnection.quit(), outboundConnection.quit()]))
+      .then(() => Promise.all([redis.quit(), commandConnection.quit(), outboundConnection.quit(), metaConnection.quit()]))
       .then(() => process.exit(0))
       .catch((error: unknown) => {
         logger.error({ err: error }, "error during shutdown");
@@ -175,11 +220,12 @@ async function main(): Promise<void> {
     shutdown("SIGINT");
   });
 
-  await Promise.all([worker.waitUntilReady(), outboundWorker.waitUntilReady()]);
+  await Promise.all([worker.waitUntilReady(), outboundWorker.waitUntilReady(), metaWorker.waitUntilReady()]);
   const restored = await manager.restoreAll();
   void replay();
   void prune();
-  logger.info({ restored, max: env.SESSIONS_MAX }, "sessions ready");
+  void checkMeta();
+  logger.info({ restored, max: env.SESSIONS_MAX, meta: meta.sender !== null }, "sessions ready");
 }
 
 main().catch((error: unknown) => {

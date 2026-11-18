@@ -10,6 +10,7 @@ import { FAVICON_SVG, ICON_PNG, LOGO_PNG } from "./brand.js";
 import { connectionTable, dashboardView } from "./dashboard.js";
 import { badge, formatDate, formatNumber, html, icon, maskUrl, page, type PageAlert } from "./html.js";
 import { CONNECTION_TABS, connectionPage, type ConnectionTab } from "./connection-page.js";
+import { newMetaConnectionPage } from "./meta-connection-page.js";
 import { endpointPage } from "./endpoint-page.js";
 import { MESSAGE_STATUSES, messagesView, searchView } from "./messages-page.js";
 import { evaluateHealth, monitoringView } from "./monitoring.js";
@@ -269,7 +270,7 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     return show(reply, request, {
       title: "Conexões", active: "connections", notice: noticeOf(request),
       body: html`
-        <section class="overview-intro"><div><h2>Seus números, sob controle.</h2><p>Consulte o status de cada sessão e abra os detalhes para gerenciar o número ou o QR Code.</p></div><a class="button" href="${filterUrl(status ?? "")}">${icon("refresh")} Atualizar</a></section>
+        <section class="overview-intro"><div><h2>Seus números, sob controle.</h2><p>Consulte o status de cada sessão e abra os detalhes para gerenciar o número ou o QR Code.</p></div><div class="intro-actions"><a class="button" href="${filterUrl(status ?? "")}">${icon("refresh")} Atualizar</a><a class="button primary" href="/admin/connections/new-meta">${icon("connection")} Nova conexão Meta</a></div></section>
         <div class="connection-tabs" role="navigation" aria-label="Filtrar por status">${STATUS_FILTERS.map(([value, label]) => html`<a class="${(status ?? "") === value ? "selected" : ""}" href="${filterUrl(value)}" ${(status ?? "") === value ? html`aria-current="page"` : ""}>${label}</a>`)}</div>
         <section class="panel connections-panel"><form class="connection-search" method="get" action="/admin/connections">
           ${status ? html`<input type="hidden" name="status" value="${status}">` : ""}
@@ -279,6 +280,39 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
         </form><div class="list-summary"><span>${formatNumber(rows.length)} ${rows.length === 1 ? "conexão encontrada" : "conexões encontradas"}</span><span>Até 500 conexões por consulta</span></div>
         ${connectionTable(rows)}</section>`,
     });
+  });
+
+  // ---------------------------------------------------------------- Meta connections
+  app.get("/admin/connections/new-meta", async (request, reply) => show(reply, request, {
+    title: "Nova conexão Meta", active: "connections", notice: noticeOf(request),
+    body: newMetaConnectionPage(await queries.clients()),
+  }));
+
+  app.post<{ Body: Record<string, string | undefined> }>("/admin/connections/meta", async (request, reply) => {
+    const body = request.body;
+    const clientId = body.clientId ?? "";
+    const tenant = (body.tenant ?? "").trim();
+    const phoneNumberId = (body.phoneNumberId ?? "").trim();
+    const wabaId = (body.wabaId ?? "").trim();
+    const label = (body.label ?? "").trim().slice(0, 100);
+    if (!UUID.test(clientId) || !tenant || tenant.length > 200 || !/^[0-9]{5,30}$/.test(phoneNumberId)
+      || (wabaId !== "" && !/^[0-9]{5,30}$/.test(wabaId))) {
+      return back(reply, "/admin/connections/new-meta",
+        "Confira os campos: cliente, organização e phone_number_id (só números) são obrigatórios.");
+    }
+    const created = await queries.createMetaConnection(adminOf(), {
+      clientId, tenantExternalId: tenant, phoneNumberId, wabaId: wabaId || null, label: label || null,
+    });
+    if ("error" in created) {
+      const messages = {
+        tenant_not_found: `A organização "${tenant}" não existe nesse cliente.`,
+        limit_reached: "A organização já usa todas as conexões do seu limite.",
+        number_in_use: "Esse phone_number_id já está em outra conexão.",
+      } as const;
+      return back(reply, "/admin/connections/new-meta", messages[created.error]);
+    }
+    await sessions.start(created.id);
+    return back(reply, `/admin/connections/${created.id}`, "Conexão Meta criada. A verificação com a Meta leva alguns segundos.");
   });
 
   app.get<{ Params: { id: string }; Querystring: { tab?: string } }>("/admin/connections/:id", async (request, reply) => {
@@ -339,6 +373,9 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     if (row.status === "connected") {
       return { status: row.status, statusLabel: labels[row.status], qrImage: null, message: "Número conectado." };
     }
+    if (row.provider !== "whatsapp_web") {
+      return { status: row.status, statusLabel: labels[row.status] ?? row.status, qrImage: null, message: "Conexão sem QR (API da Meta)." };
+    }
     const qr = await sessions.currentQr(row.id);
     return {
       status: row.status,
@@ -358,7 +395,9 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     await queries.auditConnection(adminOf(), row.client_id, id,
       action === "restart" ? "connection.restarted" : "connection.logged_out");
     return back(reply, `/admin/connections/${id}`,
-      action === "restart" ? "Reinício pedido. O QR aparece em alguns segundos." : "Desconexão pedida.");
+      row.provider === "meta_cloud"
+        ? action === "restart" ? "Verificação pedida. A Meta responde em alguns segundos." : "O On Connect parou de usar este número."
+        : action === "restart" ? "Reinício pedido. O QR aparece em alguns segundos." : "Desconexão pedida.");
   });
 
   // ---------------------------------------------------------------- Clients

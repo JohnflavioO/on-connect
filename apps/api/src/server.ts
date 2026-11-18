@@ -1,5 +1,6 @@
 import {
   createApiKeyAuthenticator,
+  createMetaWebhookQueue,
   createLogger,
   createPostgresCredentialStore,
   createPostgresPool,
@@ -28,6 +29,7 @@ async function main(): Promise<void> {
   });
 
   const sessions = createSessionGateway({ redis });
+  const metaWebhooks = createMetaWebhookQueue(redis);
 
   const app = await buildApp({
     env,
@@ -35,6 +37,9 @@ async function main(): Promise<void> {
     authenticator,
     db,
     sessions,
+    enqueueMetaWebhook: async (payload) => {
+      await metaWebhooks.add("meta", { payload });
+    },
   });
 
   let shuttingDown = false;
@@ -53,7 +58,7 @@ async function main(): Promise<void> {
     // then release Redis and the database pool.
     app
       .close()
-      .then(() => sessions.close())
+      .then(() => Promise.all([sessions.close(), metaWebhooks.close()]))
       .then(() => Promise.all([redis.quit(), db.close()]))
       .then(() => process.exit(0))
       .catch((error: unknown) => {

@@ -12,7 +12,14 @@ export const QUEUE_NAMES = {
   sessions: "sessions",
   /** Outbound messages, consumed by the sessions process (it owns the sockets). */
   outbound: "outbound",
+  /** Signed Meta webhooks, accepted by the API, stored by the sessions process. */
+  metaWebhooks: "meta-webhooks",
 } as const;
+
+/** One Meta webhook body, already checked against its signature by the API. */
+export interface MetaWebhookJob {
+  payload: unknown;
+}
 
 /** Payload of an outbound job: everything else is read from the database. */
 export interface OutboundJob {
