@@ -13,7 +13,8 @@ Atualizado em 2026-11-18. Atualize este arquivo ao fim de cada etapa.
   10 tentativas por endereço em 15 min e 20 por minuto no total; cada tentativa vai
   para o log do `admin`.
 - **Ordem do deploy** (junto com as configurações por conexão abaixo):
-  1. aplicar a migration `connection_behavior` no Supabase;
+  1. ~~aplicar a migration `connection_behavior` no Supabase~~ — **feito em 2026-11-18**,
+     registrada como `20261118142124_connection_behavior` (arquivo renomeado para a mesma versão);
   2. `up -d --build admin sessions`;
   3. `up -d caddy` (a Caddy sem `basic_auth` só depois do painel com login).
 
