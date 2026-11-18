@@ -291,31 +291,64 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     body: newMetaConnectionPage(await queries.clients()),
   }));
 
+  // A Meta number for a Tendi workspace (D-API session) or a native organization.
   app.post<{ Body: Record<string, string | undefined> }>("/admin/connections/meta", async (request, reply) => {
     const body = request.body;
+    const form = "/admin/connections/new-meta";
     const clientId = body.clientId ?? "";
-    const tenant = (body.tenant ?? "").trim();
+    const mode = body.mode === "tenant" ? "tenant" : "session";
+    const target = (body.target ?? "").trim();
     const phoneNumberId = (body.phoneNumberId ?? "").trim();
     const wabaId = (body.wabaId ?? "").trim();
     const label = (body.label ?? "").trim().slice(0, 100);
-    if (!UUID.test(clientId) || !tenant || tenant.length > 200 || !/^[0-9]{5,30}$/.test(phoneNumberId)
+    if (!UUID.test(clientId) || !/^[0-9]{5,30}$/.test(phoneNumberId)
       || (wabaId !== "" && !/^[0-9]{5,30}$/.test(wabaId))) {
-      return back(reply, "/admin/connections/new-meta",
-        "Confira os campos: cliente, organização e phone_number_id (só números) são obrigatórios.");
+      return back(reply, form, "Confira os campos: cliente e phone_number_id (só números) são obrigatórios.");
     }
-    const created = await queries.createMetaConnection(adminOf(), {
-      clientId, tenantExternalId: tenant, phoneNumberId, wabaId: wabaId || null, label: label || null,
-    });
-    if ("error" in created) {
-      const messages = {
-        tenant_not_found: `A organização "${tenant}" não existe nesse cliente.`,
-        limit_reached: "A organização já usa todas as conexões do seu limite.",
-        number_in_use: "Esse phone_number_id já está em outra conexão.",
-      } as const;
-      return back(reply, "/admin/connections/new-meta", messages[created.error]);
+    // Same rule as D-API session ids; organizations allow up to 200 characters.
+    if (mode === "session" ? !/^[A-Za-z0-9._-]{1,100}$/.test(target) : !target || target.length > 200) {
+      return back(reply, form, mode === "session"
+        ? "Código da sessão inválido: use o código que o Console do Tendi mostra (letras, números, ponto, hífen)."
+        : "Informe a organização (tenant).");
     }
-    await sessions.start(created.id);
-    return back(reply, `/admin/connections/${created.id}`, "Conexão Meta criada. A verificação com a Meta leva alguns segundos.");
+
+    let createdId: string;
+    let replaced: string[] = [];
+    if (mode === "session") {
+      const created = await queries.createMetaSession(adminOf(), {
+        clientId, sessionKey: target, phoneNumberId, wabaId: wabaId || null, label: label || null,
+        replace: body.replace === "on",
+      });
+      if ("error" in created) {
+        const messages = {
+          client_not_found: "Cliente não encontrado ou inativo.",
+          session_in_use: `A sessão "${target}" já tem uma conexão. Para trocar pelo número oficial, marque "Substituir a conexão atual desta sessão".`,
+          number_in_use: "Esse phone_number_id já está em outra conexão.",
+        } as const;
+        return back(reply, form, messages[created.error]);
+      }
+      createdId = created.id;
+      replaced = created.replaced;
+    } else {
+      const created = await queries.createMetaConnection(adminOf(), {
+        clientId, tenantExternalId: target, phoneNumberId, wabaId: wabaId || null, label: label || null,
+      });
+      if ("error" in created) {
+        const messages = {
+          tenant_not_found: `A organização "${target}" não existe nesse cliente.`,
+          limit_reached: "A organização já usa todas as conexões do seu limite.",
+          number_in_use: "Esse phone_number_id já está em outra conexão.",
+        } as const;
+        return back(reply, form, messages[created.error]);
+      }
+      createdId = created.id;
+    }
+    // The replaced WhatsApp Web number is logged out, as "Excluir" does.
+    for (const id of replaced) await sessions.logout(id);
+    await sessions.start(createdId);
+    return back(reply, `/admin/connections/${createdId}`, replaced.length > 0
+      ? "Número oficial ligado à sessão; a conexão anterior foi encerrada. A verificação com a Meta leva alguns segundos."
+      : "Conexão Meta criada. A verificação com a Meta leva alguns segundos.");
   });
 
   app.get<{ Params: { id: string }; Querystring: { tab?: string } }>("/admin/connections/:id", async (request, reply) => {

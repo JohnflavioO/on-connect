@@ -6,6 +6,10 @@ type Clients = Awaited<ReturnType<AdminQueries["clients"]>>;
 /**
  * Form to add a Meta Cloud API number. Only ids go here (they are not
  * secrets): the access token stays in the server environment.
+ *
+ * Two ways to attach it: as a D-API session (what Tendi uses: the
+ * workspace's session code, e.g. tendi-<id>, shown in Tendi's console), or
+ * to an organization of the native API.
  */
 export function newMetaConnectionPage(clients: Clients): Html {
   const active = clients.filter((client) => client.status === "active");
@@ -17,8 +21,14 @@ export function newMetaConnectionPage(clients: Clients): Html {
         <form class="stack" method="post" action="/admin/connections/meta">
           <label>Cliente
             <select name="clientId" required>${active.map((client) => html`<option value="${client.id}">${client.name} (${client.slug})</option>`)}</select></label>
-          <label>Organização (tenant)
-            <input name="tenant" required maxlength="200" placeholder="external id da organização, ex.: tendi-org-1" autocomplete="off"></label>
+          <fieldset class="choice">
+            <legend>Onde o número vai ser usado</legend>
+            <label class="radio"><input type="radio" name="mode" value="session" checked> <span><strong>Workspace do Tendi</strong><small>Cole o código da sessão que o Console do Tendi mostra (ex.: tendi-…). O workspace passa a usar este número.</small></span></label>
+            <label class="radio"><input type="radio" name="mode" value="tenant"> <span><strong>Organização da API nativa</strong><small>Para integradores que usam a API /v1 do On Connect.</small></span></label>
+          </fieldset>
+          <label>Código da sessão do Tendi ou organização
+            <input name="target" required maxlength="100" placeholder="ex.: tendi-637a9d9f-…" autocomplete="off"></label>
+          <label class="checkbox"><input type="checkbox" name="replace" value="on"> <span>Substituir a conexão atual desta sessão. <small>Se o workspace usa WhatsApp por QR Code, esse número é desconectado e o oficial entra no lugar. As conversas antigas continuam no Tendi.</small></span></label>
           <label>phone_number_id
             <input name="phoneNumberId" required inputmode="numeric" pattern="[0-9]{5,30}" placeholder="ex.: 123456789012345" autocomplete="off"></label>
           <label>WABA ID (opcional)
@@ -31,9 +41,9 @@ export function newMetaConnectionPage(clients: Clients): Html {
       <section class="panel">
         <h2 style="margin-top:0">Onde encontrar</h2>
         <ol class="steps">
-          <li>Em developers.facebook.com, abra o app da Meta e vá em <strong>WhatsApp › Configuração da API</strong>.</li>
-          <li>Escolha o número. O <strong>phone_number_id</strong> e o <strong>WABA ID</strong> aparecem logo abaixo dele.</li>
-          <li>Na mesma área, em <strong>Webhooks</strong>, a URL deve ser <span class="mono">/webhooks/meta</span> deste domínio, com o campo <strong>messages</strong> assinado.</li>
+          <li>No <strong>Console do Tendi</strong>, abra o workspace do cliente e use <strong>Ativar número oficial</strong>: ele mostra o código da sessão.</li>
+          <li>Em developers.facebook.com, abra o app da Meta e vá em <strong>WhatsApp › Configuração da API</strong>. O <strong>phone_number_id</strong> e o <strong>WABA ID</strong> aparecem abaixo do número.</li>
+          <li>O webhook da Meta deve apontar para <span class="mono">/webhooks/meta</span> deste domínio, com o campo <strong>messages</strong> assinado.</li>
         </ol>
         <div class="info-note">${icon("shield")}<span><strong>O token da Meta não entra aqui.</strong> Ele fica só no servidor (META_ACCESS_TOKEN). Estes IDs não são segredos.</span></div>
       </section>
