@@ -46,14 +46,20 @@ export function landingPage(): string {
         <p>Envie mensagens pelo seu sistema, receba eventos em tempo real por webhooks e acompanhe as conexões de cada cliente no painel.</p>
         <div class="public-actions">
           <a class="public-primary" href="#plano">Ver plano ${icon("arrow")}</a>
-          <a class="public-secondary" href="#como-funciona">Como funciona</a>
+          <a class="public-secondary" href="/docs">Explorar a API ${icon("arrow")}</a>
         </div>
       </div>
-      <figure class="api-preview">
-        <figcaption>
-          <span>${icon("send")} Enviar mensagem</span>
-          <code>API REST</code>
-        </figcaption>
+      <div class="hero-flow">
+        <ol class="hero-route" aria-label="Caminho de uma mensagem">
+          <li><span>${icon("grid")}</span>Seu sistema</li>
+          <li><span><img src="/admin/assets/icon.png" alt="" width="348" height="375"></span>On Connect</li>
+          <li><span>${icon("connection")}</span>WhatsApp</li>
+        </ol>
+        <figure class="api-preview">
+          <figcaption>
+            <span>${icon("send")} Enviar mensagem</span>
+            <code>API REST</code>
+          </figcaption>
         <pre tabindex="0" aria-label="Exemplo de requisição para enviar uma mensagem"><code><span class="api-method">POST</span> /v1/connections/{id}/messages
 Authorization: Bearer &lt;CHAVE_DA_API&gt;
 Content-Type: application/json
@@ -62,8 +68,13 @@ Content-Type: application/json
   <span class="api-field">"to"</span>: <span class="api-string">"5511999999999"</span>,
   <span class="api-field">"text"</span>: <span class="api-string">"Seu pedido está a caminho."</span>
 }</code></pre>
-        <div class="api-response"><code>202 Accepted</code><span>Envio aceito para processamento</span></div>
-      </figure>
+          <div class="api-response"><code>202 Accepted</code><span>Envio aceito para processamento</span></div>
+        </figure>
+        <div class="hero-conversation" aria-label="Exemplo de conversa">
+          <span class="conversation-icon">${icon("inbox")}</span>
+          <div><span>Prévia da mensagem</span><p>Seu pedido está a caminho.</p></div>
+        </div>
+      </div>
     </div>
   </section>
   <section class="solution-band" id="solucao" aria-labelledby="solution-title">
@@ -102,6 +113,7 @@ Content-Type: application/json
     <div class="section-intro">
       <h2 id="plan-title">Plano On Connect</h2>
       <p>Para equipes que querem enviar mensagens e receber eventos de WhatsApp diretamente no sistema que já usam.</p>
+      <a class="public-secondary plan-docs" href="/docs">Ver documentação ${icon("arrow")}</a>
     </div>
     <div class="plan-card">
       <p class="plan-price"><span>R$</span> 37,49</p>
