@@ -35,10 +35,6 @@ services:
     environment:
       API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in deploy/.env}
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in deploy/.env}
-      # Super-admin panel at /admin: login checked by Caddy, then the proxy
-      # secret proves to the panel that the request passed that check.
-      ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in deploy/.env}
-      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?set ADMIN_PASSWORD_HASH in deploy/.env}
       ADMIN_PROXY_SECRET: ${ADMIN_PROXY_SECRET:?set ADMIN_PROXY_SECRET in deploy/.env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
@@ -64,6 +60,8 @@ services:
       API_KEY_PEPPER: ${API_KEY_PEPPER:?set API_KEY_PEPPER in deploy/.env}
       ADMIN_PROXY_SECRET: ${ADMIN_PROXY_SECRET:?set ADMIN_PROXY_SECRET in deploy/.env}
       ADMIN_ORIGIN: https://${API_DOMAIN}
+      ADMIN_USER: ${ADMIN_USER:?set ADMIN_USER in deploy/.env}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?set ADMIN_PASSWORD_HASH in deploy/.env}
     volumes:
       - ./supabase-ca.crt:/run/certs/supabase-ca.crt:ro
     networks: [edge, data]

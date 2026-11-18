@@ -7,7 +7,7 @@ import { generateApiKey, type DatabasePool } from "@on-connect/core";
  */
 
 export interface Admin {
-  /** The Caddy basic-auth user, for the audit log. */
+  /** The authenticated administrator, for the audit log. */
   name: string;
 }
 
@@ -127,9 +127,11 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
         status_changed_at: Date; display_phone_number: string | null; verified_name: string | null;
         tenant: string; client_slug: string; client_id: string; provider: string;
         sent7: string; received7: string;
+        reject_calls: boolean; read_on_reply: boolean;
       }>(
         `SELECT c.id, c.session_key, c.status, c.status_reason, c.status_changed_at, c.display_phone_number,
                 c.verified_name, t.external_id AS tenant, cl.slug AS client_slug, cl.id AS client_id, c.provider,
+                c.reject_calls, c.read_on_reply,
                 (SELECT count(*) FROM onconnect.messages m WHERE m.connection_id = c.id AND m.direction = 'outbound'
                     AND m.created_at > now() - interval '7 days') AS sent7,
                 (SELECT count(*) FROM onconnect.messages m WHERE m.connection_id = c.id AND m.direction = 'inbound'
@@ -141,6 +143,24 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
         [id],
       );
       return row ?? null;
+    },
+
+    async updateConnectionBehavior(admin: Admin, id: string, rejectCalls: boolean, readOnReply: boolean) {
+      const [row] = await run<{ updated: boolean }>(
+        `WITH updated AS (
+           UPDATE onconnect.connections
+              SET reject_calls = $3, read_on_reply = $4
+            WHERE id = $1 AND deleted_at IS NULL AND provider = 'whatsapp_web'
+            RETURNING id, client_id, reject_calls, read_on_reply
+         )
+         INSERT INTO onconnect.audit_log (client_id, actor_type, actor_id, action, target_type, target_id, metadata)
+         SELECT client_id, 'admin', $2, 'connection.settings_updated', 'connection', id::text,
+                jsonb_build_object('rejectCalls', reject_calls, 'readOnReply', read_on_reply)
+           FROM updated
+         RETURNING true AS updated`,
+        [id, admin.name, rejectCalls, readOnReply],
+      );
+      return row?.updated ?? false;
     },
 
     auditConnection: (admin: Admin, clientId: string, connectionId: string, action: string) =>

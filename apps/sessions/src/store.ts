@@ -60,7 +60,18 @@ export function phoneFromJid(jid: string): string | null {
   return /^[0-9]{5,20}$/.test(digits) ? digits : null;
 }
 
-export function createPostgresSessionStore(pool: DatabasePool): SessionStore {
+export interface ReadReceiptMessage {
+  id: string;
+  remoteJid: string;
+}
+
+export interface SessionBehaviorStore {
+  loadSettings(connectionId: string): Promise<{ reject_calls: boolean; read_on_reply: boolean } | null>;
+  messagesToRead(connectionId: string, jids: string[], phone: string, before: Date): Promise<ReadReceiptMessage[]>;
+  recordReadReceipts(connectionId: string, ids: string[]): Promise<void>;
+}
+
+export function createPostgresSessionStore(pool: DatabasePool): SessionStore & SessionBehaviorStore {
   const run = async <Row>(sql: string, params: readonly unknown[]) => {
     const connection = await pool.connect();
     try {
@@ -78,6 +89,44 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore {
         [connectionId],
       );
       return result.rows[0] ?? null;
+    },
+
+    async loadSettings(connectionId) {
+      const result = await run<{ reject_calls: boolean; read_on_reply: boolean }>(
+        `SELECT reject_calls, read_on_reply FROM onconnect.connections
+          WHERE id = $1 AND provider = 'whatsapp_web' AND deleted_at IS NULL`,
+        [connectionId],
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async messagesToRead(connectionId, jids, phone, before) {
+      const result = await run<ReadReceiptMessage>(
+        `SELECT m.provider_message_id AS id, m.payload ->> 'jid' AS "remoteJid"
+           FROM onconnect.messages m
+           JOIN onconnect.connections c ON c.id = m.connection_id
+          WHERE c.id = $1 AND c.provider = 'whatsapp_web' AND c.deleted_at IS NULL AND c.read_on_reply
+            AND m.direction = 'inbound' AND m.read_receipt_sent_at IS NULL AND m.created_at <= $4
+            -- Only recent messages: turning the option on must not walk years of history.
+            AND m.created_at > now() - interval '7 days'
+            AND m.provider_message_id IS NOT NULL
+            AND (m.payload ->> 'jid' ~ '^[0-9]+(:[0-9]+)?@(s[.]whatsapp[.]net|lid)$')
+            AND (m.payload ->> 'jid' = ANY($2::text[])
+              OR (m.counterpart = $3 AND m.payload ->> 'counterpartIsPhone' = 'true'))
+          ORDER BY m.created_at DESC, m.id DESC
+          LIMIT 100`,
+        [connectionId, jids, phone, before],
+      );
+      return result.rows;
+    },
+
+    async recordReadReceipts(connectionId, ids) {
+      await run(
+        `UPDATE onconnect.messages SET read_receipt_sent_at = now()
+          WHERE connection_id = $1 AND provider_message_id = ANY($2::text[])
+            AND direction = 'inbound' AND read_receipt_sent_at IS NULL`,
+        [connectionId, ids],
+      );
     },
 
     async liveIds() {

@@ -238,6 +238,7 @@ main {
   color: #525a66;
   margin: 0 10px;
 }
+.top-actions { display: flex; align-items: center; gap: 10px; }
 .console-badge {
   display: flex;
   align-items: center;
@@ -1636,7 +1637,6 @@ label.setting-row { cursor: pointer; }
   font-family: inherit; font-size: 9px; font-weight: 500; line-height: 1; color: var(--muted); border: 1px solid var(--line); border-radius: 5px;
   padding: 4px 6px; white-space: nowrap; background: #13171b;
 }
-.top-actions { display: flex; align-items: center; gap: 10px; }
 .alerts-menu { position: relative; }
 .alerts-menu summary {
   list-style: none; cursor: pointer; position: relative; display: grid; place-items: center;

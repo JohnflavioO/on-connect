@@ -36,8 +36,13 @@ Inspirada nas configurações de instância da D-API, `/admin/connections/:id`:
 - **Desenvolvedor**: Session ID (camada D-API), id da conexão, organização e
   cliente, com botão Copiar. A API key **não** aparece: o On Connect guarda só um
   resumo cifrado; ela é mostrada uma vez, ao ser criada.
-- **Configurações**: ignorar grupos e status (sempre ligado). Rejeitar chamadas e
-  marcar como lido ao responder estão marcados como próxima etapa.
+- **Configurações**: grupos e status são sempre ignorados. Em conexões WhatsApp Web,
+  **Rejeitar chamadas** recusa ofertas de voz e vídeo recebidas ao vivo. **Marcar como lido
+  ao responder** confirma a leitura das mensagens anteriores do mesmo contato registradas
+  pelo On Connect, após um envio de texto ou mídia pela API. O Baileys respeita a
+  configuração de privacidade dos recibos do WhatsApp.
+- As duas opções começam desligadas e mudanças valem sem reiniciar a conexão. O painel
+  registra as alterações como `connection.settings_updated`.
 
 ### Endpoint de webhook
 
@@ -109,14 +114,23 @@ desconectar, criar cliente, gerar/revogar chave, reenviar, reativar) vai para
 
 ## Segurança
 
-- **Login na Caddy** (`basic_auth`), usuário `ADMIN_USER` e senha guardada só
-  como hash bcrypt (`ADMIN_PASSWORD_HASH`). Para sair, feche o navegador.
-- **Segredo entre Caddy e painel** (`ADMIN_PROXY_SECRET`): a Caddy o injeta em
-  toda requisição para `/admin`; o painel responde 404 a qualquer coisa sem ele,
-  então nenhum outro container da rede chega ao painel pulando o login. A rota
-  da API remove esses cabeçalhos.
-- **CSRF**: formulários só são aceitos com `Origin` igual ao do painel
-  (`ADMIN_ORIGIN`); o navegador reenviaria a senha num formulário de outro site.
+- A landing pública abre em `/` e o formulário de entrada em `/admin/login`.
+  Use o mesmo usuário `ADMIN_USER` e a senha correspondente ao hash bcrypt
+  `ADMIN_PASSWORD_HASH`. A sessão expira em 8 horas e o botão **Sair** a revoga.
+- **Segredo entre Caddy e painel** (`ADMIN_PROXY_SECRET`): a Caddy o injeta nas
+  rotas do site e do painel no cabeçalho `X-OnConnect-Console-Secret`. O serviço
+  exige esse cabeçalho e verifica a sessão nas rotas privadas. A rota da API
+  remove os cabeçalhos internos do painel. O nome é diferente do usado antes do
+  login próprio (`X-OnConnect-Admin-Secret`, atrás do `basic_auth`): se a Caddy
+  nova subir com o painel antigo, o painel responde 404 em vez de abrir sem senha.
+- **CSRF**: formulários exigem `Origin` igual a `ADMIN_ORIGIN`. O cookie de
+  sessão é HTTPS, HttpOnly e SameSite=Lax. O Redis armazena o hash do token.
+- **Tentativas de entrada**: 10 por endereço em 15 minutos (um acerto zera a
+  contagem) e 20 por minuto somando todos os endereços, para que muitos
+  endereços não ocupem o servidor conferindo senhas. Enquanto o limite geral
+  estiver estourado o painel recusa todos por até 1 minuto; a API não é afetada.
+  Toda tentativa vai para o log do `admin` (`event: admin.login`, resultado e
+  endereço; nunca a senha).
 - Processo próprio (`admin`), com `onconnect_system` (vê todos os clientes): a
   API pública continua sem esse acesso.
 - HTML escapado por padrão; CSP sem scripts inline; `no-store`; `DENY` em frames.
@@ -134,4 +148,6 @@ desconectar, criar cliente, gerar/revogar chave, reenviar, reativar) vai para
    ADMIN_PASSWORD_HASH='<hash do passo 1>'
    ADMIN_PROXY_SECRET=<openssl rand -hex 32>
    ```
-3. Deploy: `docker compose --env-file .env up -d --build admin caddy`.
+3. Deploy, **nesta ordem**: primeiro `docker compose --env-file .env up -d --build admin`,
+   depois `docker compose --env-file .env up -d caddy`.
+   Em instalações existentes, os três valores atuais podem ser reutilizados.

@@ -7,7 +7,7 @@ import type { AdminQueries } from "./queries.js";
  * One connection, in tabs like D-API's instance settings: Conexão (status,
  * QR, actions, delete), Histórico (status changes and webhook deliveries of
  * this session), Desenvolvedor (ids to configure an integrator) and
- * Configurações (fixed behaviors, the planned switches).
+ * Configurações (fixed behaviors and per-connection settings).
  */
 
 export const CONNECTION_TABS = ["conexao", "historico", "desenvolvedor", "configuracoes"] as const;
@@ -113,17 +113,24 @@ function desenvolvedorTab(row: Connection): Html {
     </section>`;
 }
 
-function configuracoesTab(): Html {
+function configuracoesTab(row: Connection): Html {
   const item = (title: string, description: string, state: Html) =>
     html`<div class="setting-row"><div><strong>${title}</strong><small>${description}</small></div>${state}</div>`;
   const always = html`<span class="badge ok">Sempre ligado</span>`;
-  const soon = html`<span class="badge muted">Próxima etapa</span>`;
+  const checkbox = (name: string, title: string, description: string, enabled: boolean) =>
+    html`<label class="setting-row"><div><strong>${title}</strong><small>${description}</small></div>
+      <input name="${name}" type="checkbox" ${enabled ? html`checked` : ""}>
+    </label>`;
   return html`
     <section class="panel"><div class="section-heading"><div><p class="eyebrow">COMPORTAMENTO</p><h2>Configurações da conexão</h2><p class="section-description">Como esta conexão trata o que chega do WhatsApp.</p></div></div>
       ${item("Ignorar grupos", "Mensagens de grupos não são processadas nem enviadas ao cliente.", always)}
       ${item("Ignorar status", "Atualizações de status (stories) e listas de transmissão são ignoradas.", always)}
-      ${item("Rejeitar chamadas", "Recusar automaticamente ligações de voz e vídeo para este número.", soon)}
-      ${item("Marcar como lido ao responder", "Ao enviar uma resposta, marcar como lidas as mensagens anteriores do contato.", soon)}
+      ${row.provider === "whatsapp_web" ? html`
+        <form method="post" action="/admin/connections/${row.id}/settings">
+          ${checkbox("rejectCalls", "Rejeitar chamadas", "Recusar automaticamente ligações de voz e vídeo para este número.", row.reject_calls)}
+          ${checkbox("readOnReply", "Marcar como lido ao responder", "Ao enviar uma mensagem pela API, marcar como lidas as mensagens anteriores do contato.", row.read_on_reply)}
+          <button class="button primary" type="submit">Salvar configurações</button>
+        </form>` : ""}
     </section>`;
 }
 
@@ -134,7 +141,7 @@ export function connectionPage(
 ): Html {
   const content = tab === "historico" ? historicoTab(extra.history ?? [], extra.deliveries ?? [])
     : tab === "desenvolvedor" ? desenvolvedorTab(row)
-    : tab === "configuracoes" ? configuracoesTab()
+    : tab === "configuracoes" ? configuracoesTab(row)
     : conexaoTab(row);
   return html`
     <div class="connection-tabs" role="navigation" aria-label="Seções da conexão">

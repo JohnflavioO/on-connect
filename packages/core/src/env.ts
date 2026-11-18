@@ -84,9 +84,8 @@ const sessionsSchema = baseSchema.extend({
 });
 
 /**
- * Super-admin panel. Reached only through Caddy, which asks for the admin
- * password and adds ADMIN_PROXY_SECRET to every request it forwards; the
- * panel refuses anything without it, so no other container can bypass Caddy.
+ * Super-admin panel. Caddy adds ADMIN_PROXY_SECRET to the requests it
+ * forwards. The panel verifies the administrator credentials.
  */
 const adminSchema = baseSchema.extend({
   ADMIN_HOST: z.string().min(1).default("0.0.0.0"),
@@ -98,6 +97,8 @@ const adminSchema = baseSchema.extend({
   ADMIN_PROXY_SECRET: z.string().min(32, "ADMIN_PROXY_SECRET must have at least 32 characters"),
   /** e.g. https://onconnect.tendidesk.com.br: forms are accepted only from it. */
   ADMIN_ORIGIN: z.url(),
+  ADMIN_USER: z.string().min(1).max(100),
+  ADMIN_PASSWORD_HASH: z.string().regex(/^\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$/, "Expected a bcrypt hash"),
 });
 
 export type BaseEnv = z.infer<typeof baseSchema>;

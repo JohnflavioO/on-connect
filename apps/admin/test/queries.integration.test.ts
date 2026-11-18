@@ -328,10 +328,22 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
     expect(sent).toBe(Number(hour.totals?.sent));
   });
 
+  it("persists connection settings and audits both values", async () => {
+    expect(await queries.connection(CONN)).toMatchObject({ reject_calls: false, read_on_reply: false });
+    expect(await queries.updateConnectionBehavior(admin, CONN, true, true)).toBe(true);
+    expect(await queries.connection(CONN)).toMatchObject({ reject_calls: true, read_on_reply: true });
+    const [entry] = await sql(
+      "SELECT actor_id, metadata FROM onconnect.audit_log WHERE action = 'connection.settings_updated' AND target_id = $1",
+      [CONN],
+    );
+    expect(entry).toEqual({ actor_id: "john", metadata: { rejectCalls: true, readOnReply: true } });
+  });
+
   it("deletes a connection as a soft delete, emitting the status event and the audit", async () => {
     expect(await queries.deleteConnection(admin, CONN)).toBe(true);
     expect(await queries.deleteConnection(admin, CONN)).toBe(false);
     expect(await queries.connection(CONN)).toBeNull();
+    expect(await queries.updateConnectionBehavior(admin, CONN, true, true)).toBe(false);
     const [row] = await sql<{ deleted: boolean; status: string; status_reason: string }>(
       "SELECT deleted_at IS NOT NULL AS deleted, status, status_reason FROM onconnect.connections WHERE id = $1", [CONN]);
     expect(row).toEqual({ deleted: true, status: "disconnected", status_reason: "deleted_by_admin" });
