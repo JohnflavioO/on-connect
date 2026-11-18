@@ -1,6 +1,6 @@
 import { brand, html, icon, type Html, type IconName } from "./html.js";
 
-function document(title: string, body: Html, login = false): string {
+export function publicDocument(title: string, body: Html, login = false): string {
   return html`<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -29,7 +29,7 @@ const features: Array<{ symbol: IconName; title: string; body: string }> = [
 ];
 
 export function landingPage(): string {
-  return document("On Connect · Integração WhatsApp", html`
+  return publicDocument("On Connect · Integração WhatsApp", html`
 <header class="public-header"><div class="public-container public-bar">
   ${brand("/")}
   <nav class="public-nav public-header-nav" aria-label="Navegação principal">
@@ -132,7 +132,7 @@ Content-Type: application/json
     </div>
     <nav class="public-nav footer-nav" aria-label="Links do rodapé">
       <a href="#solucao">Solução</a><a href="#recursos">Recursos</a><a href="#como-funciona">Como funciona</a>
-      <a href="#plano">Plano</a><a href="/admin/login">Acessar conta</a>
+      <a href="#plano">Plano</a><a href="/docs">Documentação</a><a href="/admin/login">Acessar conta</a>
     </nav>
   </div>
   <div class="public-container footer-meta">© ${new Date().getUTCFullYear()} On Connect</div>
@@ -140,7 +140,7 @@ Content-Type: application/json
 }
 
 export function loginPage(error?: string): string {
-  return document("Entrar · On Connect", html`
+  return publicDocument("Entrar · On Connect", html`
 <header class="public-header"><div class="public-container public-bar">
   ${brand("/", "CONSOLE")}
   <a class="public-secondary" href="/">Voltar ao início</a>

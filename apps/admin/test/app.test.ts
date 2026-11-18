@@ -208,6 +208,22 @@ describe("access guard", () => {
 });
 
 describe("public site and admin sign-in", () => {
+  it("links the public API documentation from the landing and dashboard", async () => {
+    const instance = await start();
+    const home = await instance.inject({ url: "/", headers: proxyHeaders });
+    const dashboard = await instance.inject({ url: "/admin", headers: viaCaddy });
+    const docs = await instance.inject({ url: "/docs", headers: proxyHeaders });
+
+    expect(home.body).toContain('href="/docs">Documentação');
+    expect(dashboard.body).toMatch(/class="sidebar-docs" href="\/docs".*Documentação/);
+    expect(docs.statusCode).toBe(200);
+    expect(docs.headers["content-type"]).toContain("text/html");
+    expect(docs.body).toContain(`${ORIGIN}/v1`);
+    expect(docs.body).toContain("202 Accepted");
+    expect(docs.body).toContain("OnConnect-Signature");
+    expect((await instance.inject({ url: "/docs" })).statusCode).toBe(404);
+  });
+
   it("links the landing page to a branded login and protects private routes", async () => {
     const instance = await start(false);
     const home = await instance.inject({ url: "/", headers: proxyHeaders });

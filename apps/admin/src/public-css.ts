@@ -160,6 +160,29 @@ export const PUBLIC_CSS = `
 .login-card .login-error {
   margin-top: 16px; padding: 9px 12px; color: #ffb7b8; background: #382225; border-radius: 8px;
 }
+.docs-layout {
+  display: grid; grid-template-columns: minmax(155px, 210px) minmax(0, 780px);
+  gap: clamp(24px, 6vw, 72px); padding-block: clamp(30px, 6vw, 76px);
+}
+.docs-nav {
+  position: sticky; top: 24px; align-self: start; padding-inline-end: 14px;
+  border-inline-end: 1px solid var(--line);
+}
+.docs-nav a { color: var(--muted); padding: 8px 10px; }
+.docs-nav a:hover { color: var(--accent); background: var(--panel-2); }
+.docs-article { min-width: 0; overflow-wrap: anywhere; }
+.public-site .docs-article h1 { font-size: clamp(34px, 5vw, 58px); text-wrap: initial; }
+.docs-lead { font-size: clamp(16px, 2vw, 19px); color: var(--muted); }
+.docs-article section { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); scroll-margin-top: 20px; }
+.docs-article h2 { margin: 0 0 8px; font-size: clamp(22px, 3vw, 30px); }
+.docs-article p, .docs-article li { line-height: 1.65; }
+.docs-article li + li { margin-top: 5px; }
+.docs-article code { color: #a0e9bd; }
+.docs-article pre {
+  margin: 14px 0; padding: 16px; overflow: auto; border-radius: 10px;
+  border: 1px solid #34514a; background: #131b20; line-height: 1.65; font-size: 13px;
+}
+.docs-article pre:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 760px) {
   .public-container, .public-site .login-layout { width: calc(100% - 32px); }
   .public-hero, .public-site .login-layout { grid-template-columns: minmax(0, 1fr); }
@@ -171,5 +194,8 @@ export const PUBLIC_CSS = `
   .solution-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .public-feature-grid, .public-steps, .public-plan { grid-template-columns: minmax(0, 1fr); }
   .public-header-nav { display: none; }
+  .docs-layout { grid-template-columns: minmax(0, 1fr); }
+  .docs-nav { position: static; flex-flow: row wrap; justify-content: flex-start; border: 0; padding-inline-end: 0; }
+  .docs-nav a { font-size: 13px; }
 }
 `;

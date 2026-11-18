@@ -198,7 +198,9 @@ export function page(options: PageOptions): string {
     ${NAV.map(([key, href, label, symbol]) =>
       html`<a href="${href}" class="${key === options.active ? "active" : ""}" ${key === options.active ? html`aria-current="page"` : ""}>${icon(symbol)}<span>${label}</span>${key === options.active ? html`<i class="nav-indicator"></i>` : ""}</a>`)}
   </nav>
-  <div class="sidebar-bottom"><div class="protected">${icon("shield")} Acesso protegido</div>
+  <div class="sidebar-bottom">
+  <a class="sidebar-docs" href="/docs">${icon("grid")} Documentação</a>
+  <div class="protected">${icon("shield")} Acesso protegido</div>
   <div class="who"><span class="avatar">${(options.user ?? "A").slice(0, 1).toUpperCase()}</span><div><strong>${options.user ?? "Administrador"}</strong><small>Super admin</small></div></div></div>
 </aside>
 <main id="main-content">

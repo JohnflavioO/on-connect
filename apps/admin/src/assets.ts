@@ -178,6 +178,16 @@ nav a.active {
 .sidebar-bottom {
   margin-top: auto;
 }
+.sidebar-docs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 11px;
+  color: var(--text);
+  border-radius: 7px;
+}
+.sidebar-docs:hover { background: var(--panel-2); }
+.sidebar-docs .icon { width: 16px; height: 16px; color: var(--accent); }
 .protected {
   display: flex;
   align-items: center;
@@ -1313,9 +1323,11 @@ tr:hover td {
     letter-spacing: 2px;
   }
   .nav-caption,
-  .sidebar-bottom {
+  .sidebar-bottom .protected,
+  .sidebar-bottom .who {
     display: none;
   }
+  .sidebar-docs { display: inline-flex; padding: 6px 7px; }
   nav {
     flex-direction: row;
     gap: 4px;
