@@ -28,7 +28,14 @@ export const PUBLIC_CSS = `
 }
 .public-primary:hover { background: #76e7da; }
 .public-primary .icon, .public-secondary .icon { width: 16px; height: 16px; }
-.public-hero { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(24px, 5vw, 72px); align-items: center; padding-block: clamp(54px, 8vw, 112px); }
+.hero-band {
+  background: radial-gradient(ellipse at 15% 0%, #163831 0%, transparent 65%),
+    linear-gradient(125deg, #101214 55%, #161d25);
+}
+.public-hero {
+  display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
+  gap: clamp(28px, 6vw, 84px); align-items: center; padding-block: clamp(64px, 9vw, 124px);
+}
 .public-kicker {
   margin: 0 0 16px; color: var(--accent); font-weight: 700;
   letter-spacing: .13em; text-transform: uppercase; font-size: 11px;
@@ -42,32 +49,57 @@ export const PUBLIC_CSS = `
   max-width: 420px; margin: 22px 0 0; color: #abb4be; font-size: clamp(16px, 2vw, 19px); line-height: 1.55;
 }
 .public-actions { display: flex; flex-wrap: wrap; gap: 15px 22px; align-items: center; margin-top: 30px; }
-.public-feature-link { color: #b7c2cb; font-weight: 650; }
-.public-feature-link:hover { color: var(--accent); }
-.public-diagram {
-  border: 1px solid #2b3c3b; border-radius: 24px; min-width: 0; min-height: 335px;
-  padding: clamp(14px, 3vw, 36px); display: grid; align-content: center; justify-items: center;
-  background: radial-gradient(ellipse at 50% 46%, #173632d9, transparent 72%),
-    radial-gradient(#6c94864a 1px, transparent 1px), #121b1e;
-  background-size: auto, 18px 18px, auto;
+.public-copy h1 { font-size: clamp(42px, 6vw, 77px); }
+.public-copy h1 em { display: block; color: #a0e9bd; }
+.public-copy > p:not(.public-kicker) { max-width: 490px; }
+.api-preview {
+  margin: 0; min-width: 0; border: 1px solid #407364; border-radius: 18px;
+  background: #131b20; box-shadow: 0 22px 64px #0005; overflow: hidden;
 }
-.diagram-row { width: 100%; display: grid; align-items: center; grid-template-columns: 1fr minmax(10px, .3fr) 1.1fr minmax(10px, .3fr) 1fr; }
-.diagram-node {
-  min-width: 0; min-height: 86px; display: flex; flex-direction: column; justify-content: center;
-  align-items: center; gap: 8px; padding: 8px 4px; color: #d0dcd9; font-size: clamp(10px, 1.25vw, 14px);
-  font-weight: 650; text-align: center; background: #172225; border: 1px solid #36514c; border-radius: 13px;
+.api-preview figcaption, .api-response {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  gap: 8px 14px; padding: 14px clamp(13px, 2vw, 23px);
 }
-.diagram-node > .icon { color: var(--accent); }
-.diagram-mark { width: 29px; height: auto; }
-.diagram-core { min-height: 108px; color: var(--text); background: #1d3533; border-color: #54867d; }
-.diagram-line { height: 1px; background: #619e91; }
-.diagram-event {
-  position: relative; display: flex; align-items: center; gap: 8px; margin-top: 24px;
-  border: 1px solid #36514c; border-radius: 100px; padding: 5px 12px;
-  background: #172225; color: #bce0d8; font-size: 12px;
+.api-preview figcaption { background: #1b282a; border-bottom: 1px solid #34514a; }
+.api-preview figcaption span { display: inline-flex; align-items: center; gap: 9px; font-weight: 650; }
+.api-preview figcaption .icon { width: 16px; color: var(--accent); }
+.api-preview figcaption code, .api-response span { font-size: 12px; color: #b2c2c8; }
+.api-preview pre {
+  margin: 0; padding: 23px clamp(13px, 2vw, 23px); overflow: auto;
+  font-size: clamp(11px, 1.2vw, 14px); line-height: 1.75; color: #e2ebed;
 }
-.diagram-event::before { content: ""; position: absolute; left: 50%; bottom: 100%; height: 25px; border-left: 1px dashed #619e91; }
-.diagram-event .icon { width: 15px; height: 15px; }
+.api-preview pre:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.api-method, .api-string { color: #a0e9bd; }
+.api-field { color: #a5d7f0; }
+.api-response { border-top: 1px solid #34514a; }
+.api-response code { color: #a0e9bd; font-size: 12px; }
+.solution-band { background: #e8f2ed; color: #192d28; }
+.solution-layout {
+  display: grid; grid-template-columns: minmax(160px, .4fr) minmax(0, 1fr);
+  gap: 24px 48px; padding-block: clamp(44px, 7vw, 88px);
+}
+.solution-layout h2 { margin: 0; color: #24594c; font-size: clamp(20px, 2.5vw, 28px); line-height: 1.2; }
+.solution-lead {
+  margin: 0; max-width: 850px; font-size: clamp(22px, 3vw, 36px);
+  line-height: 1.3; letter-spacing: -.035em;
+}
+.solution-details {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px;
+  margin: 28px 0 0; padding-top: 18px; border-top: 1px solid #b3c9bf;
+}
+.solution-details dt { font-size: 13px; color: #3d6359; }
+.solution-details dd { margin: 3px 0 0; font-weight: 700; }
+.closing-band {
+  border-top: 1px solid #325147;
+  background: linear-gradient(115deg, #203b32, #182a29 52%, #15212a);
+}
+.closing-content { padding-block: clamp(50px, 8vw, 100px); text-align: center; }
+.closing-content h2 {
+  margin: 0; color: #c0f3d4; font-size: clamp(34px, 6vw, 64px);
+  letter-spacing: -.06em; line-height: 1.05; text-wrap: balance;
+}
+.closing-content p { max-width: 480px; margin: 17px auto 0; color: #c5d6d1; font-size: 16px; }
+.closing-content .public-actions { justify-content: center; }
 .public-features { padding-block: 38px 64px; border-top: 1px solid var(--line); }
 .public-features h2, .section-intro h2, .login-card h2 { margin: 0 0 23px; font-size: clamp(23px, 3vw, 33px); letter-spacing: -.035em; line-height: 1.15; }
 .public-feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
@@ -135,7 +167,8 @@ export const PUBLIC_CSS = `
   .public-site .login-layout { align-content: start; padding-block: 42px; }
   .login-info h1 br { display: none; }
   .login-icons { display: none; }
-  .public-diagram { min-height: 245px; }
+  .solution-layout { grid-template-columns: minmax(0, 1fr); }
+  .solution-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .public-feature-grid, .public-steps, .public-plan { grid-template-columns: minmax(0, 1fr); }
   .public-header-nav { display: none; }
 }
