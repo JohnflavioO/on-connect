@@ -128,10 +128,13 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
         tenant: string; client_slug: string; client_id: string; provider: string;
         sent7: string; received7: string;
         reject_calls: boolean; read_on_reply: boolean;
+        phone_number_id: string | null; waba_id: string | null; quality_rating: string | null;
+        messaging_limit_tier: string | null; last_health_check_at: Date | null;
       }>(
         `SELECT c.id, c.session_key, c.status, c.status_reason, c.status_changed_at, c.display_phone_number,
                 c.verified_name, t.external_id AS tenant, cl.slug AS client_slug, cl.id AS client_id, c.provider,
-                c.reject_calls, c.read_on_reply,
+                c.reject_calls, c.read_on_reply, c.phone_number_id, c.waba_id, c.quality_rating,
+                c.messaging_limit_tier, c.last_health_check_at,
                 (SELECT count(*) FROM onconnect.messages m WHERE m.connection_id = c.id AND m.direction = 'outbound'
                     AND m.created_at > now() - interval '7 days') AS sent7,
                 (SELECT count(*) FROM onconnect.messages m WHERE m.connection_id = c.id AND m.direction = 'inbound'
@@ -161,6 +164,50 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
         [id, admin.name, rejectCalls, readOnReply],
       );
       return row?.updated ?? false;
+    },
+
+    /**
+     * A Meta Cloud API connection for a client's organization, waiting for
+     * the sessions process to confirm the number with Meta. Respects the
+     * organization's connection limit; a phone number id lives in one
+     * connection only (unique index).
+     */
+    async createMetaConnection(admin: Admin, input: {
+      clientId: string; tenantExternalId: string; phoneNumberId: string; wabaId: string | null; label: string | null;
+    }): Promise<{ id: string } | { error: "tenant_not_found" | "limit_reached" | "number_in_use" }> {
+      let rows: Array<{ id: string; client_id: string }>;
+      try {
+        rows = await run<{ id: string; client_id: string }>(
+          `WITH t AS (
+             SELECT t.id, t.client_id, t.max_connections,
+                    (SELECT count(*) FROM onconnect.connections c
+                      WHERE c.tenant_id = t.id AND c.deleted_at IS NULL) AS live
+               FROM onconnect.tenants t
+              WHERE t.client_id = $1 AND t.external_id = $2
+           )
+           INSERT INTO onconnect.connections
+             (client_id, tenant_id, provider, label, status, status_reason, phone_number_id, waba_id)
+           SELECT client_id, id, 'meta_cloud', $3, 'connecting', 'checking_meta', $4, $5
+             FROM t WHERE live < max_connections
+           RETURNING id, client_id`,
+          [input.clientId, input.tenantExternalId, input.label, input.phoneNumberId, input.wabaId],
+        );
+      } catch (error) {
+        if ((error as { code?: string }).code === "23505") return { error: "number_in_use" };
+        throw error;
+      }
+      const row = rows[0];
+      if (!row) {
+        const [tenant] = await run<{ id: string }>(
+          "SELECT id FROM onconnect.tenants WHERE client_id = $1 AND external_id = $2",
+          [input.clientId, input.tenantExternalId],
+        );
+        return { error: tenant ? "limit_reached" : "tenant_not_found" };
+      }
+      await audit(admin, row.client_id, "connection.created", "connection", row.id, {
+        provider: "meta_cloud", tenantExternalId: input.tenantExternalId, phoneNumberId: input.phoneNumberId,
+      });
+      return { id: row.id };
     },
 
     auditConnection: (admin: Admin, clientId: string, connectionId: string, action: string) =>

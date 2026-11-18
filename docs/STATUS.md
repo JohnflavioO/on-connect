@@ -2,6 +2,18 @@
 
 Atualizado em 2026-11-18. Atualize este arquivo ao fim de cada etapa.
 
+## Meta Cloud API, fase 1 (2026-11-18)
+
+- Segundo provedor ao lado do WhatsApp Web; detalhes em `docs/meta.md`. Decisões: um token
+  no servidor (`META_ACCESS_TOKEN`), conexões Meta criadas só pelo painel, texto fora da
+  janela de 24 h é enviado e a falha volta com o código da Meta (`meta_131047`).
+- `api` recebe `/webhooks/meta` (assinatura com `META_APP_SECRET`) e enfileira; `sessions`
+  grava mensagens, status e mídia, e envia pela Graph API pelo mesmo outbox.
+- Sem migration: a tabela `connections` já tinha `phone_number_id`, `waba_id`, qualidade e limite.
+- `pnpm check` passou; os testes com PostgreSQL novos rodam no CI.
+- Falta: criar o app na Meta, pôr as 3 variáveis no `deploy/.env`, deploy de `api`, `sessions`
+  e `admin`, e testar com o número de teste da Meta. Fase 2: templates e janela de 24 h.
+
 ## Landing e entrada do console (2026-11-18)
 
 - Landing pública em `/` e formulário em `/admin/login`, com a marca do
@@ -221,7 +233,7 @@ Atualizado em 2026-11-18. Atualize este arquivo ao fim de cada etapa.
      web da Hostinger continua como acesso de emergência).
 2. **Configurar o Tendi**: URL base, API key, `maxConnections` dos tenants, endpoint de webhook.
 3. Depois: `scopes` das API keys, idempotência por `Idempotency-Key`, mídia (envio/download),
-   Meta Cloud API como segundo provedor.
+   Meta Cloud API como segundo provedor (fase 1 feita; ver `docs/meta.md`).
 
 ## Acesso à VPS a partir de outro computador
 - IP: `179.66.149.16`. Fingerprint do servidor (ED25519):

@@ -16,6 +16,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { dapiCompatRoutes } from "./routes/dapi-compat.js";
 import { healthRoutes } from "./routes/health.js";
 import { mediaRoutes } from "./routes/media.js";
+import { metaWebhookRoutes } from "./routes/meta-webhooks.js";
 import { v1Routes } from "./routes/v1.js";
 
 /** External dependencies the API needs. Injected so tests can replace them. */
@@ -29,6 +30,8 @@ export interface AppDependencies {
   db: DatabasePool;
   /** Commands and QR codes of the WhatsApp Web sessions process. */
   sessions: SessionGateway;
+  /** Queues a signed Meta webhook body for the sessions process. */
+  enqueueMetaWebhook?: (payload: unknown) => Promise<void>;
   /** D-API layer: how long a send waits for its outcome. Tests shorten it. */
   compatSendWaitMs?: number;
 }
@@ -92,7 +95,8 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
     max: env.RATE_LIMIT_MAX_PER_MINUTE,
     timeWindow: "1 minute",
     // Probes come from Docker and Caddy on the internal network.
-    allowList: (request) => request.url.startsWith("/health/"),
+    // Meta delivers in bursts from few addresses; its route checks a signature instead.
+    allowList: (request) => request.url.startsWith("/health/") || request.url.startsWith("/webhooks/meta"),
   });
 
   // Unknown routes count against the limit too, so path scanning is throttled.
@@ -131,6 +135,15 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
     prefix: "/media",
     vault: createMediaVault({ key: env.MEDIA_KEY, dir: env.MEDIA_DIR, publicBaseUrl: env.PUBLIC_API_BASE_URL }),
   });
+  // Meta WhatsApp Cloud API webhooks, only when the app secret is configured.
+  if (env.META_APP_SECRET && env.META_VERIFY_TOKEN && deps.enqueueMetaWebhook) {
+    await app.register(metaWebhookRoutes, {
+      prefix: "/webhooks/meta",
+      appSecret: env.META_APP_SECRET,
+      verifyToken: env.META_VERIFY_TOKEN,
+      enqueue: deps.enqueueMetaWebhook,
+    });
+  }
   await app.register(v1Routes, {
     prefix: "/v1",
     authenticator: deps.authenticator,

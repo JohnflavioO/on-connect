@@ -197,3 +197,93 @@ describe.skipIf(!enabled)("sessions store as onconnect_system (PostgreSQL 17)", 
     expect(row?.status_reason).not.toBe("should_not_apply");
   });
 });
+
+describe.skipIf(!enabled)("Meta Cloud API connections in the sessions store (PostgreSQL 17)", () => {
+  const META_CLIENT = "aaaaaaaa-0000-4000-8000-0000000000e1";
+  const META_TENANT = "aaaaaaaa-0000-4000-8000-0000000000e2";
+  const META_CONN = "aaaaaaaa-0000-4000-8000-0000000000e3";
+  const META_OUT = "aaaaaaaa-0000-4000-8000-0000000000e4";
+  const PHONE_ID = "106540352242922";
+  const admin = createPostgresPool({ host: "localhost", user: "postgres", password: "postgres", database: "postgres", max: 1 });
+  const system = createPostgresPool({
+    host: "localhost", user: "onconnect_system", password: "integration-only", database: "postgres", max: 2,
+  });
+  const sessions = createPostgresSessionStore(system);
+  const outbound = createPostgresOutboundStore(system);
+  const sql = async <Row>(text: string, params: readonly unknown[] = []) => {
+    const connection = await admin.connect();
+    try {
+      return (await connection.query<Row>(text, params)).rows;
+    } finally {
+      connection.release();
+    }
+  };
+
+  beforeAll(async () => {
+    await sql("ALTER ROLE onconnect_system LOGIN PASSWORD 'integration-only'");
+    await sql("INSERT INTO onconnect.clients (id, slug, name) VALUES ($1, 'sessions-meta', 'M')", [META_CLIENT]);
+    await sql(
+      "INSERT INTO onconnect.tenants (id, client_id, external_id, name, max_connections) VALUES ($1, $2, 'meta-shop', 'Meta', 2)",
+      [META_TENANT, META_CLIENT],
+    );
+    await sql(
+      `INSERT INTO onconnect.connections (id, client_id, tenant_id, provider, status, phone_number_id, waba_id)
+       VALUES ($1, $2, $3, 'meta_cloud', 'connecting', $4, '200000000000001')`,
+      [META_CONN, META_CLIENT, META_TENANT, PHONE_ID],
+    );
+  });
+
+  afterAll(async () => {
+    await system.close();
+    await admin.close();
+  });
+
+  it("finds the connection by phone number id and stores what Meta reports", async () => {
+    expect(await sessions.metaConnectionId(PHONE_ID)).toBe(META_CONN);
+    expect(await sessions.metaConnectionId("999")).toBeNull();
+    expect(await sessions.load(META_CONN)).toMatchObject({ provider: "meta_cloud", phoneNumberId: PHONE_ID });
+    await sessions.markMetaConnected(META_CONN, {
+      displayPhoneNumber: "+55 85 99913-2494", verifiedName: "Loja Oficial", qualityRating: "GREEN", messagingLimitTier: "TIER_1K",
+    });
+    const [row] = await sql<Record<string, unknown>>(
+      `SELECT status, display_phone_number, verified_name, quality_rating, messaging_limit_tier,
+              last_health_check_at IS NOT NULL AS checked
+         FROM onconnect.connections WHERE id = $1`, [META_CONN]);
+    expect(row).toEqual({ status: "connected", display_phone_number: "5585999132494", verified_name: "Loja Oficial",
+      quality_rating: "GREEN", messaging_limit_tier: "TIER_1K", checked: true });
+    expect(await sessions.metaCheckIds()).toContain(META_CONN);
+    expect(await sessions.liveIds()).not.toContain(META_CONN);
+  });
+
+  it("sends with Meta's id stored after acceptance, and records a failure with Meta's code", async () => {
+    await sql(
+      `INSERT INTO onconnect.messages (id, client_id, tenant_id, connection_id, direction, status, message_type, counterpart, payload)
+       VALUES ($1, $2, $3, $4, 'outbound', 'queued', 'text', '5585999132494', '{"content":{"type":"text","text":"oi"}}')`,
+      [META_OUT, META_CLIENT, META_TENANT, META_CONN],
+    );
+    await sql("INSERT INTO onconnect.message_jobs (client_id, message_id) VALUES ($1, $2)", [META_CLIENT, META_OUT]);
+    expect(await outbound.load(META_OUT)).toMatchObject({ provider: "meta_cloud", phoneNumberId: PHONE_ID, providerMessageId: null });
+
+    await outbound.markSending(META_OUT, null);
+    await outbound.markSent(META_OUT, "wamid.HBgM");
+    expect(await sessions.knowsOutbound(META_CONN, "wamid.HBgM")).toBe(true);
+    expect(await sessions.knowsOutbound(META_CONN, "wamid.other")).toBe(false);
+
+    expect(await sessions.recordStatus(META_CONN, { providerId: "wamid.HBgM", status: "failed", errorCode: "meta_131047" }))
+      .toBe(true);
+    const [message] = await sql<{ status: string; error_code: string; provider_message_id: string }>(
+      "SELECT status, error_code, provider_message_id FROM onconnect.messages WHERE id = $1", [META_OUT]);
+    expect(message).toEqual({ status: "failed", error_code: "meta_131047", provider_message_id: "wamid.HBgM" });
+    const [event] = await sql<{ error: string }>(
+      `SELECT payload ->> 'error' AS error FROM onconnect.webhook_events
+        WHERE client_id = $1 AND dedupe_key = $2`, [META_CLIENT, `message.status:${META_OUT}:failed`]);
+    expect(event).toEqual({ error: "meta_131047" });
+  });
+
+  it("refuses the same phone number id in a second live connection", async () => {
+    await expect(sql(
+      `INSERT INTO onconnect.connections (client_id, tenant_id, provider, status, phone_number_id)
+       VALUES ($1, $2, 'meta_cloud', 'connecting', $3)`, [META_CLIENT, META_TENANT, PHONE_ID],
+    )).rejects.toMatchObject({ code: "23505" });
+  });
+});

@@ -171,9 +171,12 @@ export async function createOutboundMessage(
       row.operational_suspended_at !== null) {
     throw new MessageRejectedError("tenant_inactive");
   }
-  if (row.provider !== "whatsapp_web" || row.status !== "connected") {
+  if (!["whatsapp_web", "meta_cloud"].includes(row.provider) || row.status !== "connected") {
     throw new MessageRejectedError("connection_not_ready");
   }
+  // Meta assigns the message id when it accepts the send; an id made up
+  // here (D-API layer) would never match Meta's statuses.
+  const providerMessageId = row.provider === "meta_cloud" ? null : input.providerMessageId ?? null;
 
   const inserted = await tx.query<{ id: string }>(
     `INSERT INTO onconnect.messages
@@ -187,7 +190,7 @@ export async function createOutboundMessage(
       input.to,
       input.clientReference ?? null,
       JSON.stringify({ content: input.content }),
-      input.providerMessageId ?? null,
+      providerMessageId,
       input.content.type,
     ],
   );

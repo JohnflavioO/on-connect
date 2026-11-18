@@ -26,7 +26,7 @@ class FakeStore implements SessionStore {
 
   async load(id: string) {
     const row = this.rows.get(id);
-    return row ? { id, ...row } : null;
+    return row ? { id, phoneNumberId: null, ...row } : null;
   }
   async liveIds() {
     return [...this.rows].filter(([, r]) => !r.deleted && ["connecting", "connected"].includes(r.status))

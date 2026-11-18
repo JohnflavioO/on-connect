@@ -1,7 +1,13 @@
 import type { FetchedBytes, OutboundContent } from "@on-connect/core";
 import type { Logger } from "pino";
+import { MetaApiError } from "./meta-graph.js";
 import { SessionNotReadyError } from "./session-manager.js";
-import type { OutboundStore } from "./store.js";
+import type { OutboundMessage, OutboundStore } from "./store.js";
+
+/** Sends through the Meta Cloud API; resolves with Meta's message id (wamid). */
+export interface MetaSender {
+  send(phoneNumberId: string, to: string, content: OutboundContent): Promise<string>;
+}
 
 /** A media file ready to hand to WhatsApp. */
 export interface OutgoingMedia {
@@ -48,8 +54,11 @@ export function createOutboundProcessor(deps: {
   sender: Sender;
   fetchMedia: MediaFetcher;
   logger: Logger;
+  /** Meta Cloud API sends; null when META_ACCESS_TOKEN is not set. */
+  meta?: MetaSender | null;
 }) {
   const { store, sender, fetchMedia, logger } = deps;
+  const meta = deps.meta ?? null;
 
   const send = async (connectionId: string, to: string, content: OutboundContent, providerId: string) => {
     if (content.type === "text") {
@@ -68,9 +77,41 @@ export function createOutboundProcessor(deps: {
     }, providerId);
   };
 
+  /**
+   * Meta assigns the message id when it accepts the send, so nothing is
+   * stored before it. Errors Meta marks as permanent (closed 24 h window,
+   * bad number, permissions) fail the message at once with Meta's code.
+   * If the database fails right after Meta accepted, the retry sends again:
+   * the Graph API has no idempotency key.
+   */
+  const sendViaMeta = async (message: OutboundMessage, attempt: number, maxAttempts: number) => {
+    const last = attempt >= maxAttempts;
+    if (!meta || !message.phoneNumberId) {
+      await store.markFailed(message.id, "meta_not_configured", "Meta Cloud API is not configured for this connection");
+      return "failed" as const;
+    }
+    await store.markSending(message.id, null);
+    let wamid: string;
+    try {
+      wamid = await meta.send(message.phoneNumberId, message.to, message.content);
+    } catch (error) {
+      const code = error instanceof MetaApiError ? error.errorCode : "send_failed";
+      const retryable = !(error instanceof MetaApiError) || error.retryable;
+      logger.warn({ messageId: message.id, attempt, code }, "meta send failed");
+      if (last || !retryable) {
+        await store.markFailed(message.id, code, error instanceof Error ? error.message : String(error));
+        return "failed" as const;
+      }
+      throw error;
+    }
+    await store.markSent(message.id, wamid);
+    return "sent" as const;
+  };
+
   return async function processOutbound({ messageId, attempt, maxAttempts }: OutboundAttempt) {
     const message = await store.load(messageId);
     if (!message || !["queued", "sending"].includes(message.status)) return "skipped" as const;
+    if (message.provider === "meta_cloud") return sendViaMeta(message, attempt, maxAttempts);
 
     const last = attempt >= maxAttempts;
     const providerId = message.providerMessageId ?? sender.newMessageId(message.connectionId);

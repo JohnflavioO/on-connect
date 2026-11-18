@@ -23,6 +23,7 @@ export {
   DEFAULT_JOB_OPTIONS,
   QUEUE_NAMES,
   QUEUE_PREFIX,
+  type MetaWebhookJob,
   type OutboundJob,
   type QueueName,
   type SystemPingJob,
@@ -151,3 +152,4 @@ export {
   upsertCompatSession,
   type CompatSession,
 } from "./dapi-compat.js";
+export { createMetaWebhookQueue, sameVerifyToken, verifyMetaSignature } from "./meta.js";

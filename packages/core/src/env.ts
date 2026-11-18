@@ -23,6 +23,13 @@ const encryptionKey = (name: string) =>
     message: `${name} must be 32 bytes in base64 (openssl rand -base64 32)`,
   });
 
+/**
+ * An optional variable that docker compose passes as "" when it is not set
+ * in deploy/.env: empty means absent.
+ */
+const optional = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
+
 const postgresUrl = (name: string) =>
   z.string().regex(/^postgres(ql)?:\/\//, `${name} must start with postgres:// or postgresql://`);
 
@@ -55,6 +62,16 @@ const apiSchema = baseSchema.extend({
   API_KEY_PEPPER: z.string().min(32, "API_KEY_PEPPER must have at least 32 characters"),
   WEBHOOK_SECRET_KEY: webhookSecretKey,
   ...mediaSettings,
+  /**
+   * Meta WhatsApp Cloud API webhooks (/webhooks/meta). Both or neither: the
+   * app secret checks each delivery's signature, the verify token answers
+   * Meta's subscription check. Without them the route answers 404.
+   */
+  META_APP_SECRET: optional(z.string().min(16)),
+  META_VERIFY_TOKEN: optional(z.string().min(16)),
+}).refine((env) => (env.META_APP_SECRET === undefined) === (env.META_VERIFY_TOKEN === undefined), {
+  message: "Set META_APP_SECRET and META_VERIFY_TOKEN together, or neither",
+  path: ["META_VERIFY_TOKEN"],
 });
 
 const workerSchema = baseSchema.extend({
@@ -81,6 +98,15 @@ const sessionsSchema = baseSchema.extend({
   MEDIA_MAX_BYTES: z.coerce.number().int().min(1_048_576).max(104_857_600).default(33_554_432),
   /** Stored media older than this is deleted (whole months at a time). */
   MEDIA_RETENTION_DAYS: z.coerce.number().int().min(7).max(3_650).default(90),
+  /**
+   * Meta WhatsApp Cloud API: permanent token of a system user with
+   * whatsapp_business_messaging and whatsapp_business_management. Without it
+   * Meta connections stay in error ("meta_not_configured").
+   */
+  META_ACCESS_TOKEN: optional(z.string().min(20)),
+  /** Graph API version, e.g. v23.0. Meta retires versions about two years after release. */
+  META_GRAPH_VERSION: z.preprocess((value) => (value === "" ? undefined : value),
+    z.string().regex(/^v[0-9]+\.[0-9]+$/, "Expected a version like v23.0").default("v23.0")),
 });
 
 /**

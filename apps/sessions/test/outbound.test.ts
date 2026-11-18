@@ -1,7 +1,8 @@
 import type { FetchedBytes } from "@on-connect/core";
 import { pino } from "pino";
 import { describe, expect, it, vi } from "vitest";
-import { createOutboundProcessor, type MediaFetcher, type Sender } from "../src/outbound.js";
+import { MetaApiError } from "../src/meta-graph.js";
+import { createOutboundProcessor, type MediaFetcher, type MetaSender, type Sender } from "../src/outbound.js";
 import { SessionNotReadyError } from "../src/session-manager.js";
 import type { OutboundMessage, OutboundStore } from "../src/store.js";
 
@@ -11,7 +12,7 @@ function setup(
   fetched: FetchedBytes = { ok: true, bytes: Buffer.from("file"), contentType: "image/jpeg" },
 ) {
   const row: OutboundMessage | null = message === null ? null : {
-    id: "m1", connectionId: "c1", status: "queued", to: "5511999999999",
+    id: "m1", connectionId: "c1", provider: "whatsapp_web", phoneNumberId: null, status: "queued", to: "5511999999999",
     content: { type: "text", text: "oi" }, providerMessageId: null, ...message,
   };
   const store = {
@@ -107,5 +108,57 @@ describe("outbound processor", () => {
     expect(await t.process(attempt(3))).toBe("failed");
     expect(t.store.markFailed).toHaveBeenCalledWith("m1", "media_unavailable", "media_unavailable: http_403");
     expect(t.send.sendMedia).not.toHaveBeenCalled();
+  });
+});
+
+describe("outbound processor with Meta", () => {
+  function metaSetup(send: MetaSender["send"] | null) {
+    const row: OutboundMessage = {
+      id: "m1", connectionId: "c1", provider: "meta_cloud", phoneNumberId: "106540352242922", status: "queued",
+      to: "5511999999999", content: { type: "text", text: "oi" }, providerMessageId: null,
+    };
+    const store = {
+      load: vi.fn(async () => row),
+      markSending: vi.fn(async () => undefined),
+      markSent: vi.fn(async () => undefined),
+      markFailed: vi.fn(async () => undefined),
+      stalePending: vi.fn(async () => []),
+    } satisfies OutboundStore;
+    const sender = { newMessageId: vi.fn(() => "3EB0NEW"), sendText: vi.fn(), sendMedia: vi.fn() };
+    const meta = send ? { send: vi.fn(send) } : null;
+    const process = createOutboundProcessor({
+      store, sender, fetchMedia: vi.fn<MediaFetcher>(), logger: pino({ level: "silent" }), meta,
+    });
+    return { store, sender, meta, process };
+  }
+
+  it("sends through Meta and stores Meta's id after it accepts", async () => {
+    const t = metaSetup(async () => "wamid.OUT");
+    expect(await t.process(attempt(1))).toBe("sent");
+    expect(t.store.markSending).toHaveBeenCalledWith("m1", null);
+    expect(t.meta?.send).toHaveBeenCalledWith("106540352242922", "5511999999999", { type: "text", text: "oi" });
+    expect(t.store.markSent).toHaveBeenCalledWith("m1", "wamid.OUT");
+    expect(t.sender.newMessageId).not.toHaveBeenCalled();
+    expect(t.sender.sendText).not.toHaveBeenCalled();
+  });
+
+  it("fails at once on a permanent Meta error, with Meta's code", async () => {
+    const t = metaSetup(async () => { throw new MetaApiError(400, 131047, false, "Re-engagement message"); });
+    expect(await t.process(attempt(1))).toBe("failed");
+    expect(t.store.markFailed).toHaveBeenCalledWith("m1", "meta_131047", "Re-engagement message");
+  });
+
+  it("retries a throttled or unreachable Meta, failing on the last attempt", async () => {
+    const t = metaSetup(async () => { throw new MetaApiError(429, 130429, true, "Rate limit hit"); });
+    await expect(t.process(attempt(1))).rejects.toThrow("Rate limit hit");
+    expect(t.store.markFailed).not.toHaveBeenCalled();
+    expect(await t.process(attempt(3))).toBe("failed");
+    expect(t.store.markFailed).toHaveBeenCalledWith("m1", "meta_130429", "Rate limit hit");
+  });
+
+  it("fails a Meta message when the server has no Meta token", async () => {
+    const t = metaSetup(null);
+    expect(await t.process(attempt(1))).toBe("failed");
+    expect(t.store.markFailed).toHaveBeenCalledWith("m1", "meta_not_configured", expect.any(String));
   });
 });

@@ -36,6 +36,8 @@ export interface InboundMessage {
 export interface StatusUpdate {
   providerId: string;
   status: Extract<MessageStatus, "sent" | "delivered" | "read" | "failed">;
+  /** Why it failed, when the provider says (Meta: "meta_131047"). */
+  errorCode?: string | null;
 }
 
 const userDigits = (jid: string | null | undefined): string | null => {
