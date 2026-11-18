@@ -212,7 +212,11 @@ describe("public site and admin sign-in", () => {
     const instance = await start(false);
     const home = await instance.inject({ url: "/", headers: proxyHeaders });
     expect(home.statusCode).toBe(200);
-    expect(home.body).toContain('href="/admin/login"');
+    expect(home.body).toContain('href="/admin/login">Acessar conta');
+    expect(home.body).toContain('id="como-funciona"');
+    expect(home.body).toContain('id="plano"');
+    expect(home.body).toContain('37,49');
+    expect(home.body).toContain('aria-label="Links do rodapé"');
     expect(home.body).toContain('src="/admin/assets/logo.png"');
     const login = await instance.inject({ url: "/admin/login", headers: proxyHeaders });
     expect(login.body).toContain('autocomplete="current-password"');
