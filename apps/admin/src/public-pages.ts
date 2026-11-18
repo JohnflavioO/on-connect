@@ -33,30 +33,51 @@ export function landingPage(): string {
 <header class="public-header"><div class="public-container public-bar">
   ${brand("/")}
   <nav class="public-nav public-header-nav" aria-label="Navegação principal">
-    <a href="#recursos">Recursos</a><a href="#como-funciona">Como funciona</a><a href="#plano">Plano</a>
+    <a href="#solucao">Solução</a><a href="#recursos">Recursos</a><a href="#como-funciona">Como funciona</a><a href="#plano">Plano</a>
   </nav>
   <a class="public-secondary" href="/admin/login">Acessar conta ${icon("arrow")}</a>
 </div></header>
 <main id="main-content" class="public-main">
-  <section class="public-container public-hero">
-    <div class="public-copy">
-      <p class="public-kicker">API de conectividade</p>
-      <h1>Conecte o WhatsApp <em>ao seu sistema.</em></h1>
-      <p>Integre mensagens e eventos de WhatsApp ao seu produto. Gerencie números, sessões e webhooks em um só console.</p>
-      <div class="public-actions">
-        <a class="public-primary" href="#plano">Ver plano ${icon("arrow")}</a>
-        <a class="public-feature-link" href="#recursos">Conhecer recursos</a>
+  <section class="hero-band" aria-labelledby="hero-title">
+    <div class="public-container public-hero">
+      <div class="public-copy">
+        <p class="public-kicker">API de WhatsApp para SaaS</p>
+        <h1 id="hero-title">Coloque o WhatsApp <em>dentro do seu produto.</em></h1>
+        <p>Envie mensagens pelo seu sistema, receba eventos em tempo real por webhooks e acompanhe as conexões de cada cliente no painel.</p>
+        <div class="public-actions">
+          <a class="public-primary" href="#plano">Ver plano ${icon("arrow")}</a>
+          <a class="public-secondary" href="#como-funciona">Como funciona</a>
+        </div>
       </div>
+      <figure class="api-preview">
+        <figcaption>
+          <span>${icon("send")} Enviar mensagem</span>
+          <code>API REST</code>
+        </figcaption>
+        <pre tabindex="0" aria-label="Exemplo de requisição para enviar uma mensagem"><code><span class="api-method">POST</span> /v1/connections/{id}/messages
+Authorization: Bearer &lt;CHAVE_DA_API&gt;
+Content-Type: application/json
+
+{
+  <span class="api-field">"to"</span>: <span class="api-string">"5511999999999"</span>,
+  <span class="api-field">"text"</span>: <span class="api-string">"Seu pedido está a caminho."</span>
+}</code></pre>
+        <div class="api-response"><code>202 Accepted</code><span>Envio aceito para processamento</span></div>
+      </figure>
     </div>
-    <div class="public-diagram" role="img" aria-label="O On Connect liga seu sistema ao WhatsApp por API e entrega eventos por webhooks.">
-      <div class="diagram-row" aria-hidden="true">
-        <div class="diagram-node">${icon("grid")}<span>Seu sistema</span></div>
-        <span class="diagram-line"></span>
-        <div class="diagram-node diagram-core"><img class="diagram-mark" src="/admin/assets/icon.png" alt="" width="348" height="375"><span>On Connect</span></div>
-        <span class="diagram-line"></span>
-        <div class="diagram-node">${icon("connection")}<span>WhatsApp</span></div>
+  </section>
+  <section class="solution-band" id="solucao" aria-labelledby="solution-title">
+    <div class="public-container solution-layout">
+      <h2 id="solution-title">O que é o On Connect?</h2>
+      <div>
+        <p class="solution-lead">O On Connect é uma API de WhatsApp para SaaS, CRMs e plataformas de atendimento. Seu produto envia mensagens e recebe respostas, enquanto sua equipe acompanha conexões e entregas pelo painel.</p>
+        <dl class="solution-details">
+          <div><dt>Integração</dt><dd>API REST</dd></div>
+          <div><dt>Conexão</dt><dd>WhatsApp Web</dd></div>
+          <div><dt>Eventos</dt><dd>Webhooks assinados</dd></div>
+          <div><dt>Operação</dt><dd>Painel de monitoramento</dd></div>
+        </dl>
       </div>
-      <div class="diagram-event" aria-hidden="true">${icon("webhook")} Eventos por webhook</div>
     </div>
   </section>
   <section class="public-container public-features" id="recursos" aria-labelledby="resources-title">
@@ -92,6 +113,16 @@ export function landingPage(): string {
       </ul>
     </div>
   </section>
+  <section class="closing-band" aria-labelledby="closing-title">
+    <div class="public-container closing-content">
+      <h2 id="closing-title">Conecte seu primeiro número.</h2>
+      <p>Vincule o WhatsApp por QR Code ou código de pareamento e envie sua primeira mensagem pela API.</p>
+      <div class="public-actions">
+        <a class="public-primary" href="/admin/login">Acessar conta ${icon("arrow")}</a>
+        <a class="public-secondary" href="#plano">Ver plano</a>
+      </div>
+    </div>
+  </section>
 </main>
 <footer class="public-footer">
   <div class="public-container footer-content">
@@ -100,7 +131,7 @@ export function landingPage(): string {
       <p>API de conectividade WhatsApp para integrar mensagens e eventos ao seu sistema.</p>
     </div>
     <nav class="public-nav footer-nav" aria-label="Links do rodapé">
-      <a href="#recursos">Recursos</a><a href="#como-funciona">Como funciona</a>
+      <a href="#solucao">Solução</a><a href="#recursos">Recursos</a><a href="#como-funciona">Como funciona</a>
       <a href="#plano">Plano</a><a href="/admin/login">Acessar conta</a>
     </nav>
   </div>
