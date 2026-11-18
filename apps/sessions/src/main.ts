@@ -20,7 +20,7 @@ import { Worker } from "bullmq";
 import { createRedisAuthState } from "./auth-state.js";
 import { guardConsole } from "./console-guard.js";
 import { createBaileysSocketFactory, resolveWaVersion } from "./baileys-socket.js";
-import { createMetaGraph } from "./meta-graph.js";
+import { createMetaGraph, exchangeMetaCode } from "./meta-graph.js";
 import { StatusesPendingError, createMetaProvider } from "./meta-provider.js";
 import { SessionManager } from "./session-manager.js";
 import { createOutboundProcessor } from "./outbound.js";
@@ -71,6 +71,15 @@ async function main(): Promise<void> {
     graph: env.META_ACCESS_TOKEN
       ? createMetaGraph({ token: env.META_ACCESS_TOKEN, version: env.META_GRAPH_VERSION })
       : null,
+    // Customers' own tokens (Embedded Signup), encrypted with the same key as
+    // the WhatsApp Web session state.
+    graphForToken: (token) => createMetaGraph({ token, version: env.META_GRAPH_VERSION }),
+    box,
+    exchangeCode: env.META_APP_ID && env.META_APP_SECRET
+      ? (code) => exchangeMetaCode({
+          appId: env.META_APP_ID ?? "", appSecret: env.META_APP_SECRET ?? "", code, version: env.META_GRAPH_VERSION,
+        })
+      : null,
     store,
     media,
     maxMediaBytes: env.MEDIA_MAX_BYTES,
@@ -105,6 +114,16 @@ async function main(): Promise<void> {
             : manager.logout(command.connectionId);
         case "pairing-code":
           return manager.requestPairingCode(command.connectionId, command.phoneNumber);
+        case "meta-signup": {
+          // The outcome goes to Redis for the API waiting on it; the code itself is never logged.
+          const outcome = await meta.signup(command.connectionId, command.code)
+            .catch((error: unknown) => {
+              logger.error({ connectionId: command.connectionId, err: error }, "meta signup crashed");
+              return { ok: false as const, error: "meta_signup_failed" };
+            });
+          await redis.set(sessionKeys.metaSignup(command.requestId), outcome.ok ? "ok" : `error:${outcome.error}`, "EX", 120);
+          return undefined;
+        }
         case "profile-picture": {
           // "" means "asked, none": the API tells it apart from a timeout.
           const url = await manager.profilePictureUrl(command.connectionId, command.phoneNumber);

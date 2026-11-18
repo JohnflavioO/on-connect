@@ -27,6 +27,10 @@ export type MetaOutgoing =
 
 export interface MetaGraph {
   phoneNumber(phoneNumberId: string): Promise<MetaPhoneNumber>;
+  /** Embedded Signup: makes the customer's account send its webhooks to this app. */
+  subscribeApp(wabaId: string): Promise<void>;
+  /** Embedded Signup: puts the number on the Cloud API; `pin` becomes its two-step PIN. */
+  registerPhone(phoneNumberId: string, pin: string): Promise<void>;
   /** The WhatsApp message id (wamid) Meta assigned. */
   sendMessage(phoneNumberId: string, to: string, message: MetaOutgoing): Promise<string>;
   mediaInfo(mediaId: string): Promise<MetaMediaInfo>;
@@ -113,6 +117,16 @@ export function createMetaGraph(options: {
       };
     },
 
+    async subscribeApp(wabaId) {
+      await call(`${encodeURIComponent(wabaId)}/subscribed_apps`, { method: "POST", body: {} });
+    },
+
+    async registerPhone(phoneNumberId, pin) {
+      await call(`${encodeURIComponent(phoneNumberId)}/register`, {
+        method: "POST", body: { messaging_product: "whatsapp", pin },
+      });
+    },
+
     async sendMessage(phoneNumberId, to, message) {
       const body = await call<{ messages?: Array<{ id?: string }> }>(`${encodeURIComponent(phoneNumberId)}/messages`, {
         method: "POST",
@@ -148,4 +162,38 @@ export function createMetaGraph(options: {
       return Buffer.concat(chunks);
     },
   };
+}
+
+/**
+ * Embedded Signup: swaps the code the customer's browser received (valid 5
+ * minutes, single use) for the customer's business token. Server to server;
+ * the app secret goes only to Meta and is never logged.
+ */
+export async function exchangeMetaCode(options: {
+  appId: string;
+  appSecret: string;
+  code: string;
+  version: string;
+  baseUrl?: string;
+  fetch?: typeof fetch;
+}): Promise<string> {
+  const base = (options.baseUrl ?? "https://graph.facebook.com").replace(/\/$/, "");
+  const url = new URL(`${base}/${options.version}/oauth/access_token`);
+  url.searchParams.set("client_id", options.appId);
+  url.searchParams.set("client_secret", options.appSecret);
+  url.searchParams.set("code", options.code);
+  let response: Response;
+  try {
+    response = await (options.fetch ?? fetch)(url, { signal: AbortSignal.timeout(20_000), redirect: "error" });
+  } catch (error) {
+    throw new MetaApiError(0, null, true, error instanceof Error ? error.message : "request failed");
+  }
+  const body = await response.json().catch(() => null) as
+    | { access_token?: string; error?: { code?: number; message?: string } }
+    | null;
+  if (!response.ok || typeof body?.access_token !== "string" || body.access_token.length < 20) {
+    const code = typeof body?.error?.code === "number" ? body.error.code : null;
+    throw new MetaApiError(response.status, code, false, body?.error?.message ?? "Code exchange failed");
+  }
+  return body.access_token;
 }

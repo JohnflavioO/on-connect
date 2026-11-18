@@ -139,6 +139,9 @@ services:
       # Meta Cloud API sends. Optional: without it Meta connections stay in error.
       META_ACCESS_TOKEN: ${META_ACCESS_TOKEN:-}
       META_GRAPH_VERSION: ${META_GRAPH_VERSION:-v23.0}
+      # Embedded Signup (customers connect their own number). Optional; both or neither.
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
     volumes:
       - ./supabase-ca.crt:/run/certs/supabase-ca.crt:ro
       - media_data:/data/media

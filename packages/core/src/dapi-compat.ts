@@ -202,3 +202,96 @@ export async function deleteCompatSession(
   if (!session) return null;
   return (await retireConnection(tx, actor, session.connectionId)) ? session.connectionId : null;
 }
+
+export class MetaSignupError extends Error {
+  constructor(readonly reason: "session_in_use" | "number_in_use" | "tenant_inactive") {
+    super(reason);
+    this.name = "MetaSignupError";
+  }
+}
+
+/**
+ * Makes a Meta Cloud API number the connection of session `sessionId`, after
+ * the integrator's customer finished Meta's Embedded Signup. The session's
+ * tenant is created when missing (room for one connection, as above). A live
+ * connection already in the session is refused unless `replace`: then it is
+ * retired (soft delete) and its id returned, so the caller logs its WhatsApp
+ * Web number out. The new connection waits ("connecting") for the sessions
+ * process to finish onboarding with Meta.
+ */
+export async function attachMetaToSession(
+  tx: ClientTransaction,
+  actor: AuditActor,
+  sessionId: string,
+  input: { phoneNumberId: string; wabaId: string; replace: boolean },
+): Promise<{ connectionId: string; replaced: string[] }> {
+  await tx.query(
+    "SELECT pg_advisory_xact_lock(hashtext('compat_session:' || onconnect.current_client_id()::text || ':' || $1))",
+    [sessionId],
+  );
+  await tx.query(
+    `INSERT INTO onconnect.tenants (client_id, external_id, name, max_connections)
+     VALUES (onconnect.current_client_id(), $1, $1, 1)
+     ON CONFLICT (client_id, external_id) DO NOTHING`,
+    [sessionId],
+  );
+  const tenant = await tx.query<{ id: string; commercial_status: string; operational_status: string }>(
+    `SELECT id, commercial_status, operational_status FROM onconnect.tenants
+      WHERE client_id = onconnect.current_client_id() AND external_id = $1 FOR UPDATE`,
+    [sessionId],
+  );
+  const row = tenant.rows[0];
+  if (!row) throw new Error("Session tenant is not visible");
+  if (row.commercial_status !== "active" || row.operational_status !== "active") {
+    throw new MetaSignupError("tenant_inactive");
+  }
+  const live = await tx.query<{ id: string }>(
+    `SELECT id FROM onconnect.connections
+      WHERE client_id = onconnect.current_client_id() AND deleted_at IS NULL
+        AND (tenant_id = $1 OR session_key = $2)
+      FOR UPDATE`,
+    [row.id, sessionId],
+  );
+  const replaced = live.rows.map((connection) => connection.id);
+  if (replaced.length > 0 && !input.replace) throw new MetaSignupError("session_in_use");
+  for (const id of replaced) {
+    await tx.query(
+      `UPDATE onconnect.connections
+          SET deleted_at = now(), status = 'disconnected', status_reason = 'replaced_by_official',
+              status_changed_at = now()
+        WHERE client_id = onconnect.current_client_id() AND id = $1`,
+      [id],
+    );
+    await tx.query(
+      `INSERT INTO onconnect.audit_log (client_id, actor_type, actor_id, action, target_type, target_id, metadata)
+       VALUES (onconnect.current_client_id(), 'client', $1, 'connection.deleted', 'connection', $2, $3)`,
+      [actor.credentialId, id, JSON.stringify({ reason: "replaced_by_official", sessionId })],
+    );
+  }
+  // A failed insert must not leave the replacements behind: a savepoint
+  // turns "number already live elsewhere" into a clean refusal.
+  await tx.query("SAVEPOINT meta_signup_insert");
+  let created: { id: string } | undefined;
+  try {
+    created = (await tx.query<{ id: string }>(
+      `INSERT INTO onconnect.connections
+         (client_id, tenant_id, provider, label, status, status_reason, phone_number_id, waba_id, session_key)
+       VALUES (onconnect.current_client_id(), $1, 'meta_cloud', $2, 'connecting', 'meta_signup', $3, $4, $2)
+       RETURNING id`,
+      [row.id, sessionId, input.phoneNumberId, input.wabaId],
+    )).rows[0];
+  } catch (error) {
+    await tx.query("ROLLBACK TO SAVEPOINT meta_signup_insert");
+    if ((error as { code?: string }).code === "23505") throw new MetaSignupError("number_in_use");
+    throw error;
+  }
+  if (!created) throw new Error("Meta connection insert returned no row");
+  await tx.query(
+    `INSERT INTO onconnect.audit_log (client_id, actor_type, actor_id, action, target_type, target_id, metadata)
+     VALUES (onconnect.current_client_id(), 'client', $1, 'connection.created', 'connection', $2, $3)`,
+    [actor.credentialId, created.id, JSON.stringify({
+      provider: "meta_cloud", sessionId, phoneNumberId: input.phoneNumberId, embeddedSignup: true, replaced,
+    })],
+  );
+  return { connectionId: created.id, replaced };
+}

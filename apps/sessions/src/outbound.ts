@@ -6,7 +6,8 @@ import type { OutboundMessage, OutboundStore } from "./store.js";
 
 /** Sends through the Meta Cloud API; resolves with Meta's message id (wamid). */
 export interface MetaSender {
-  send(phoneNumberId: string, to: string, content: OutboundContent): Promise<string>;
+  /** With the connection: a number onboarded by Embedded Signup sends with its own token. */
+  send(connectionId: string, phoneNumberId: string, to: string, content: OutboundContent): Promise<string>;
 }
 
 /** A media file ready to hand to WhatsApp. */
@@ -93,7 +94,7 @@ export function createOutboundProcessor(deps: {
     await store.markSending(message.id, null);
     let wamid: string;
     try {
-      wamid = await meta.send(message.phoneNumberId, message.to, message.content);
+      wamid = await meta.send(message.connectionId, message.phoneNumberId, message.to, message.content);
     } catch (error) {
       const code = error instanceof MetaApiError ? error.errorCode : "send_failed";
       const retryable = !(error instanceof MetaApiError) || error.retryable;

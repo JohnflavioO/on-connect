@@ -105,3 +105,31 @@ mesma sessão:
 
 Os avisos (`message.received`, `message.status`, `connection.status`) saem no formato
 D-API com o `sessionId` da sessão, como para as sessões por QR.
+
+## Cadastro incorporado (Embedded Signup): o cliente conecta o próprio número
+
+O cliente do Tendi clica em **Conectar WhatsApp oficial**, entra com o Facebook dele,
+escolhe a empresa e o número, e confirma o código que a Meta manda. Cada cliente fica com a
+própria conta do WhatsApp na Meta (a Meta cobra dele).
+
+| Passo | Quem |
+|---|---|
+| Janela da Meta (`FB.login` com o `config_id`) | navegador, no Tendi |
+| `POST /compat/dapi/api/v1/sessions/:id/meta-signup` `{code, wabaId, phoneNumberId, replace}` | Tendi → `api` |
+| Cria a conexão Meta na sessão (substitui a anterior se `replace`) | `api` (`attachMetaToSession`) |
+| Troca o código pelo token do cliente, guarda cifrado (`provider_credentials`, com o PIN), liga a conta ao app (`subscribed_apps`), registra o número (`/register`), confere | `sessions` (comando `meta-signup`) |
+
+- O código vale 5 minutos e é de uso único: vai pela fila só para o `sessions`, o job some do
+  Redis ao terminar, e nunca é registrado em log.
+- O token do cliente é cifrado com a `SESSION_STATE_KEY` (a mesma do estado do WhatsApp Web),
+  ligado à conexão (não serve para outra). Envio, mídia e conferência desse número usam esse
+  token; números da conta do On Connect continuam com `META_ACCESS_TOKEN`.
+- A `api` espera até 45 s pela conclusão; depois disso responde 504 e o status da sessão mostra
+  o resultado.
+- Variáveis no `sessions`: `META_APP_ID` e `META_APP_SECRET` (juntas). Sem elas, a rota responde
+  502 `meta_signup_not_configured`.
+- Na Meta: Login do Facebook para Empresas › Configurações › configuração com a variação
+  **WhatsApp Embedded Signup** (o `config_id` vai para o Tendi); domínio do Tendi em
+  **Allowed domains**; webhook com os campos `messages` e `account_update`.
+- Exige que a empresa seja Provedor de Tecnologia para clientes de fora. Antes disso, em modo de
+  desenvolvimento, só administradores e testadores do app conseguem concluir o cadastro.

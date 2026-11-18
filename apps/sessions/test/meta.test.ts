@@ -1,6 +1,7 @@
 import { pino } from "pino";
 import { describe, expect, it, vi } from "vitest";
-import { MetaApiError, createMetaGraph, type MetaGraph } from "../src/meta-graph.js";
+import { createSecretBox, type SealedParts } from "@on-connect/core";
+import { MetaApiError, createMetaGraph, exchangeMetaCode, type MetaGraph } from "../src/meta-graph.js";
 import { parseMetaWebhook, toMetaOutgoing } from "../src/meta-mapping.js";
 import { StatusesPendingError, createMetaProvider, type MetaProviderStore } from "../src/meta-provider.js";
 
@@ -133,6 +134,8 @@ function fakeStore(overrides: Partial<MetaProviderStore> = {}) {
     markMetaConnected: vi.fn<MetaProviderStore["markMetaConnected"]>(async () => undefined),
     metaCheckIds: vi.fn<MetaProviderStore["metaCheckIds"]>(async () => []),
     knowsOutbound: vi.fn<MetaProviderStore["knowsOutbound"]>(async () => true),
+    loadMetaCredential: vi.fn<MetaProviderStore["loadMetaCredential"]>(async () => null),
+    saveMetaCredential: vi.fn<MetaProviderStore["saveMetaCredential"]>(async () => undefined),
     ...overrides,
   };
 }
@@ -143,6 +146,8 @@ function fakeGraph(overrides: Partial<MetaGraph> = {}): MetaGraph {
       displayPhoneNumber: "+55 85 99913-2494", verifiedName: "Loja", qualityRating: "GREEN", messagingLimitTier: "TIER_1K",
     })),
     sendMessage: vi.fn(async () => "wamid.OUT"),
+    subscribeApp: vi.fn(async () => undefined),
+    registerPhone: vi.fn(async () => undefined),
     mediaInfo: vi.fn(async () => ({ url: "https://lookaside.fbsbx.com/m", mimetype: "image/jpeg", fileSize: 5 })),
     downloadMedia: vi.fn(async () => Buffer.from("image")),
     ...overrides,
@@ -233,8 +238,104 @@ describe("Meta provider", () => {
   it("sends through the Graph API with Meta's body", async () => {
     const sendMessage = vi.fn(async () => "wamid.OUT");
     const provider = createMetaProvider({ graph: fakeGraph({ sendMessage }), store: fakeStore(), media: null, maxMediaBytes: 100, logger });
-    await expect(provider.sender?.send(PHONE_ID, "5585999132494", { type: "text", text: "oi" })).resolves.toBe("wamid.OUT");
+    await expect(provider.sender?.send("conn-1", PHONE_ID, "5585999132494", { type: "text", text: "oi" })).resolves.toBe("wamid.OUT");
     expect(sendMessage).toHaveBeenCalledWith(PHONE_ID, "5585999132494", { type: "text", text: { body: "oi", preview_url: false } });
     expect(createMetaProvider({ graph: null, store: fakeStore(), media: null, maxMediaBytes: 100, logger }).sender).toBeNull();
+  });
+});
+
+describe("Meta Embedded Signup", () => {
+  const box = createSecretBox(Buffer.alloc(32, 9).toString("base64"));
+  const WABA = "200000000000001";
+  const metaRow = (id: string) => ({
+    id, provider: "meta_cloud", status: "connecting" as const, deleted: false, phoneNumberId: PHONE_ID, wabaId: WABA,
+  });
+
+  it("swaps the code, stores the customer's token encrypted, links the account and registers the number", async () => {
+    let saved: SealedParts | null = null;
+    const store = fakeStore({
+      load: vi.fn(async (id: string) => metaRow(id)),
+      saveMetaCredential: vi.fn(async (_id: string, sealed: SealedParts) => { saved = sealed; }),
+    });
+    const subscribeApp = vi.fn(async () => undefined);
+    const registerPhone = vi.fn(async () => undefined);
+    const customer = fakeGraph({ subscribeApp, registerPhone });
+    const tokens: string[] = [];
+    const exchangeCode = vi.fn(async () => "EAAcustomer-business-token-1234567890");
+    const provider = createMetaProvider({
+      graph: null, box, exchangeCode, store, media: null, maxMediaBytes: 100, logger,
+      graphForToken: (token) => { tokens.push(token); return customer; },
+      newPin: () => "482913",
+    });
+
+    await expect(provider.signup("conn-1", "AQB-signup-code")).resolves.toEqual({ ok: true });
+    expect(exchangeCode).toHaveBeenCalledWith("AQB-signup-code");
+    expect(tokens).toEqual(["EAAcustomer-business-token-1234567890"]);
+    expect(subscribeApp).toHaveBeenCalledWith(WABA);
+    expect(registerPhone).toHaveBeenCalledWith(PHONE_ID, "482913");
+    expect(store.markMetaConnected).toHaveBeenCalledWith("conn-1", expect.objectContaining({ verifiedName: "Loja" }));
+    // Encrypted, bound to this connection: not readable as text, not usable for another one.
+    expect(saved).not.toBeNull();
+    const stored = saved as unknown as SealedParts;
+    expect(stored.ciphertext.toString("utf8")).not.toContain("EAAcustomer");
+    expect(JSON.parse(box.openParts(stored, "meta_credential:conn-1"))).toEqual({
+      token: "EAAcustomer-business-token-1234567890", pin: "482913" });
+    expect(() => box.openParts(stored, "meta_credential:conn-2")).toThrow();
+  });
+
+  it("sends with the customer's token once the connection has one, and the server's otherwise", async () => {
+    const sealed = box.sealParts(JSON.stringify({ token: "EAAcustomer-token-abcdefghij", pin: "1" }), "meta_credential:own");
+    const store = fakeStore({ loadMetaCredential: vi.fn(async (id: string) => (id === "own" ? sealed : null)) });
+    const serverSend = vi.fn(async () => "wamid.SERVER");
+    const customerSend = vi.fn(async () => "wamid.CUSTOMER");
+    const provider = createMetaProvider({
+      graph: fakeGraph({ sendMessage: serverSend }), box, store, media: null, maxMediaBytes: 100, logger,
+      graphForToken: () => fakeGraph({ sendMessage: customerSend }),
+    });
+    await expect(provider.sender?.send("own", PHONE_ID, "5585999132494", { type: "text", text: "oi" })).resolves.toBe("wamid.CUSTOMER");
+    await expect(provider.sender?.send("shared", PHONE_ID, "5585999132494", { type: "text", text: "oi" })).resolves.toBe("wamid.SERVER");
+  });
+
+  it("records Meta's error as the connection status when onboarding fails", async () => {
+    const store = fakeStore({ load: vi.fn(async (id: string) => metaRow(id)) });
+    const provider = createMetaProvider({
+      graph: null, box, store, media: null, maxMediaBytes: 100, logger,
+      exchangeCode: vi.fn(async () => { throw new MetaApiError(400, 100, false, "Invalid verification code format"); }),
+      graphForToken: () => fakeGraph(),
+    });
+    await expect(provider.signup("conn-1", "expired-code")).resolves.toEqual({ ok: false, error: "meta_100" });
+    expect(store.setStatus).toHaveBeenCalledWith("conn-1", "error", "meta_100");
+    expect(store.saveMetaCredential).not.toHaveBeenCalled();
+  });
+
+  it("refuses when Embedded Signup is not configured or the connection is not a Meta one", async () => {
+    const store = fakeStore();
+    await expect(createMetaProvider({ graph: fakeGraph(), store, media: null, maxMediaBytes: 100, logger })
+      .signup("conn-1", "code")).resolves.toEqual({ ok: false, error: "meta_signup_not_configured" });
+    const web = fakeStore({ load: vi.fn(async (id: string) => ({ ...metaRow(id), provider: "whatsapp_web" })) });
+    await expect(createMetaProvider({
+      graph: null, box, store: web, media: null, maxMediaBytes: 100, logger,
+      exchangeCode: vi.fn(async () => "x".repeat(30)), graphForToken: () => fakeGraph(),
+    }).signup("conn-1", "code")).resolves.toEqual({ ok: false, error: "connection_not_found" });
+  });
+});
+
+describe("Meta code exchange", () => {
+  it("asks Meta for the business token with the app id and secret", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+      new Response(JSON.stringify({ access_token: "EAAbusiness-token-1234567890", token_type: "bearer" }), { status: 200 }));
+    await expect(exchangeMetaCode({ appId: "1473739174705593", appSecret: "app-secret-for-tests", code: "AQBcode",
+      version: "v27.0", fetch })).resolves.toBe("EAAbusiness-token-1234567890");
+    const url = fetch.mock.calls[0]?.[0] as URL;
+    expect(url.pathname).toBe("/v27.0/oauth/access_token");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      client_id: "1473739174705593", client_secret: "app-secret-for-tests", code: "AQBcode" });
+  });
+
+  it("fails with Meta's code when the code is expired or reused", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+      new Response(JSON.stringify({ error: { code: 100, message: "This authorization code has expired." } }), { status: 400 }));
+    await expect(exchangeMetaCode({ appId: "1", appSecret: "s".repeat(16), code: "old", version: "v27.0", fetch }))
+      .rejects.toMatchObject({ errorCode: "meta_100", retryable: false });
   });
 });
