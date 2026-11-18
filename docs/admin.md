@@ -118,11 +118,19 @@ desconectar, criar cliente, gerar/revogar chave, reenviar, reativar) vai para
   Use o mesmo usuário `ADMIN_USER` e a senha correspondente ao hash bcrypt
   `ADMIN_PASSWORD_HASH`. A sessão expira em 8 horas e o botão **Sair** a revoga.
 - **Segredo entre Caddy e painel** (`ADMIN_PROXY_SECRET`): a Caddy o injeta nas
-  rotas do site e do painel. O serviço exige esse cabeçalho e verifica a sessão
-  nas rotas privadas. A rota da API remove os cabeçalhos internos do painel.
+  rotas do site e do painel no cabeçalho `X-OnConnect-Console-Secret`. O serviço
+  exige esse cabeçalho e verifica a sessão nas rotas privadas. A rota da API
+  remove os cabeçalhos internos do painel. O nome é diferente do usado antes do
+  login próprio (`X-OnConnect-Admin-Secret`, atrás do `basic_auth`): se a Caddy
+  nova subir com o painel antigo, o painel responde 404 em vez de abrir sem senha.
 - **CSRF**: formulários exigem `Origin` igual a `ADMIN_ORIGIN`. O cookie de
-  sessão é HTTPS, HttpOnly e SameSite=Lax. O Redis armazena o hash do token e
-  limita as tentativas de entrada por endereço de origem.
+  sessão é HTTPS, HttpOnly e SameSite=Lax. O Redis armazena o hash do token.
+- **Tentativas de entrada**: 10 por endereço em 15 minutos (um acerto zera a
+  contagem) e 20 por minuto somando todos os endereços, para que muitos
+  endereços não ocupem o servidor conferindo senhas. Enquanto o limite geral
+  estiver estourado o painel recusa todos por até 1 minuto; a API não é afetada.
+  Toda tentativa vai para o log do `admin` (`event: admin.login`, resultado e
+  endereço; nunca a senha).
 - Processo próprio (`admin`), com `onconnect_system` (vê todos os clientes): a
   API pública continua sem esse acesso.
 - HTML escapado por padrão; CSP sem scripts inline; `no-store`; `DENY` em frames.
@@ -140,5 +148,6 @@ desconectar, criar cliente, gerar/revogar chave, reenviar, reativar) vai para
    ADMIN_PASSWORD_HASH='<hash do passo 1>'
    ADMIN_PROXY_SECRET=<openssl rand -hex 32>
    ```
-3. Deploy: `docker compose --env-file .env up -d --build admin caddy`.
+3. Deploy, **nesta ordem**: primeiro `docker compose --env-file .env up -d --build admin`,
+   depois `docker compose --env-file .env up -d caddy`.
    Em instalações existentes, os três valores atuais podem ser reutilizados.

@@ -107,6 +107,8 @@ export function createPostgresSessionStore(pool: DatabasePool): SessionStore & S
            JOIN onconnect.connections c ON c.id = m.connection_id
           WHERE c.id = $1 AND c.provider = 'whatsapp_web' AND c.deleted_at IS NULL AND c.read_on_reply
             AND m.direction = 'inbound' AND m.read_receipt_sent_at IS NULL AND m.created_at <= $4
+            -- Only recent messages: turning the option on must not walk years of history.
+            AND m.created_at > now() - interval '7 days'
             AND m.provider_message_id IS NOT NULL
             AND (m.payload ->> 'jid' ~ '^[0-9]+(:[0-9]+)?@(s[.]whatsapp[.]net|lid)$')
             AND (m.payload ->> 'jid' = ANY($2::text[])

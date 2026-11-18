@@ -19,10 +19,15 @@
 	respond @health 404
 
 	# Public site and console. The console handles credentials and sessions.
+	# The secret travels in X-OnConnect-Console-Secret, a header the older
+	# panel (which relied on basic_auth here) does not accept: whichever of
+	# Caddy and admin is updated first, the console is never served without
+	# its own login. X-OnConnect-Admin-Secret is dropped for the same reason.
 	@console path / /assets/on-connect.css /admin /admin/*
 	handle @console {
 		reverse_proxy admin:8081 {
-			header_up X-OnConnect-Admin-Secret {$ADMIN_PROXY_SECRET}
+			header_up X-OnConnect-Console-Secret {$ADMIN_PROXY_SECRET}
+			header_up -X-OnConnect-Admin-Secret
 			header_up X-OnConnect-Login-IP {http.request.remote.host}
 			header_up -X-OnConnect-Admin-User
 		}
@@ -35,6 +40,7 @@
 			health_timeout 3s
 			# Only the console routes may carry these.
 			header_up -X-OnConnect-Admin-Secret
+			header_up -X-OnConnect-Console-Secret
 			header_up -X-OnConnect-Admin-User
 			header_up -X-OnConnect-Login-IP
 		}

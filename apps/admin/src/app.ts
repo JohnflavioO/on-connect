@@ -76,7 +76,10 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
 
   app.addHook("onRequest", async (request, reply) => {
     if (request.url === "/health/live") return undefined;
-    if (!sameSecret(request.headers["x-onconnect-admin-secret"] as string | undefined, options.proxySecret)) {
+    // Caddy sends the secret in X-OnConnect-Console-Secret. The older panel
+    // read X-OnConnect-Admin-Secret behind basic_auth; using a new name keeps
+    // a half-finished deploy (new Caddy, old panel) closed instead of open.
+    if (!sameSecret(request.headers["x-onconnect-console-secret"] as string | undefined, options.proxySecret)) {
       return reply.code(404).send("Not found");
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -145,12 +148,21 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     const username = typeof body?.username === "string" ? body.username : "";
     const password = typeof body?.password === "string" ? body.password : "";
     const ip = request.headers["x-onconnect-login-ip"];
-    const result = await auth.signIn(typeof ip === "string" ? ip : request.ip, username, password);
-    if (result.status === "ok") return reply.header("set-cookie", result.cookie).redirect("/admin", 303);
+    const address = typeof ip === "string" ? ip : request.ip;
+    const result = await auth.signIn(address, username, password);
+    // Every attempt is logged (never the password) so attacks show up in the logs.
+    if (result.status === "ok") {
+      request.log.info({ event: "admin.login", outcome: "ok", ip: address }, "admin signed in");
+      return reply.header("set-cookie", result.cookie).redirect("/admin", 303);
+    }
     const limited = result.status === "limited";
+    request.log.warn({ event: "admin.login", outcome: limited ? `limited_${result.scope}` : "invalid", ip: address },
+      "admin sign-in refused");
     if (limited) reply.header("retry-after", result.retryAfter);
     return reply.code(limited ? 429 : 401).type("text/html; charset=utf-8").send(loginPage(limited
-      ? "Muitas tentativas. Aguarde um minuto e tente novamente."
+      ? result.scope === "ip"
+        ? "Muitas tentativas deste endereço. Aguarde 15 minutos e tente novamente."
+        : "Muitas tentativas de acesso agora. Aguarde um minuto e tente novamente."
       : "Usuário ou senha inválidos."));
   });
   app.post("/admin/logout", async (request, reply) => {

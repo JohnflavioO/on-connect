@@ -7,9 +7,15 @@ Atualizado em 2026-11-18. Atualize este arquivo ao fim de cada etapa.
 - Landing pública em `/` e formulário em `/admin/login`, com a marca do
   dashboard. O serviço `admin` usa o usuário e o hash bcrypt existentes,
   emite um cookie de sessão HTTPS e permite sair pelo próprio painel.
-- Este ajuste requer a atualização de `admin` e `caddy`. Para publicar
-  junto com as configurações por conexão abaixo, aplicar a migration indicada
-  naquela etapa.
+- Revisão de segurança (2026-11-18): o segredo da Caddy passou para o cabeçalho
+  `X-OnConnect-Console-Secret`. Assim, se a Caddy nova subir antes do painel novo,
+  o painel antigo responde 404 em vez de ficar aberto sem senha. Entrada limitada a
+  10 tentativas por endereço em 15 min e 20 por minuto no total; cada tentativa vai
+  para o log do `admin`.
+- **Ordem do deploy** (junto com as configurações por conexão abaixo):
+  1. aplicar a migration `connection_behavior` no Supabase;
+  2. `up -d --build admin sessions`;
+  3. `up -d caddy` (a Caddy sem `basic_auth` só depois do painel com login).
 
 ## Comportamento do WhatsApp por conexão (2026-11-18)
 
@@ -19,8 +25,11 @@ Atualizado em 2026-11-18. Atualize este arquivo ao fim de cada etapa.
   sem reiniciar o socket.
 - `pnpm check`, as migrations, o teste de isolamento e os 82 testes de integração
   passaram em PostgreSQL 17 descartável.
+- **Marcar como lido** roda depois do envio (a API não espera por ele), uma vez
+  por contato de cada vez, só para mensagens dos últimos 7 dias e no máximo
+  500 por resposta. Ligar a opção não percorre o histórico antigo.
 - Antes do deploy, aplicar a migration `connection_behavior` e atualizar `admin`
-  e `sessions`. Falta validar os dois controles com um número real de teste.
+  e `sessions` (ordem acima). Falta validar os dois controles com um número real de teste.
 
 ## Conexão em abas e gestão de webhooks no painel (2026-11-17)
 

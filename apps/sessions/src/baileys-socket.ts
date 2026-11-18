@@ -18,6 +18,9 @@ import { toInbound, toStatus, type InboundMessage } from "./message-mapping.js";
 import type { CloseReason, SocketFactory } from "./session-manager.js";
 import { phoneFromJid, type SessionBehaviorStore } from "./store.js";
 
+/** Read receipts per reply: at most this many batches of 100 messages. */
+const READ_BATCHES = 5;
+
 function closeReason(statusCode: number | undefined): CloseReason {
   switch (statusCode) {
     case DisconnectReason.loggedOut:
@@ -151,25 +154,38 @@ export function createBaileysSocketFactory(
       return recipient.jid;
     };
 
-    const sendTo = async (jid: string, content: AnyMessageContent, messageId: string): Promise<string> => {
-      const before = new Date();
-      const sent = await socket.sendMessage(jid, content, { messageId });
-      // A receipt failure must never retry a message WhatsApp already accepted.
+    // "Mark as read on reply": after a send, the contact's earlier inbound
+    // messages get read receipts. It runs after the send has returned (the
+    // API never waits on it), only once at a time per contact, over the last
+    // days (see messagesToRead) and at most READ_BATCHES x 100 messages.
+    const reading = new Set<string>();
+    const markEarlierAsRead = async (jid: string, before: Date): Promise<void> => {
+      const phone = phoneFromJid(jid);
+      if (!phone || reading.has(jid)) return;
+      reading.add(jid);
       try {
-        const phone = phoneFromJid(jid);
-        if (sent && phone && (await options.behavior.loadSettings(connectionId))?.read_on_reply) {
-          const lid = await socket.signalRepository.lidMapping.getLIDForPN(jid).catch(() => null);
-          const jids = lid ? [jid, lid] : [jid];
-          for (;;) {
-            const keys = await options.behavior.messagesToRead(connectionId, jids, phone, before);
-            if (keys.length === 0) break;
-            await socket.readMessages(keys);
-            await options.behavior.recordReadReceipts(connectionId, keys.map((key) => key.id));
-          }
+        if (!(await options.behavior.loadSettings(connectionId))?.read_on_reply) return;
+        const lid = await socket.signalRepository.lidMapping.getLIDForPN(jid).catch(() => null);
+        const jids = lid ? [jid, lid] : [jid];
+        for (let batch = 0; batch < READ_BATCHES; batch += 1) {
+          const keys = await options.behavior.messagesToRead(connectionId, jids, phone, before);
+          if (keys.length === 0) break;
+          await socket.readMessages(keys);
+          await options.behavior.recordReadReceipts(connectionId, keys.map((key) => key.id));
         }
       } catch {
         logger.warn({ connectionId }, "could not mark previous WhatsApp messages as read");
+      } finally {
+        reading.delete(jid);
       }
+    };
+
+    const sendTo = async (jid: string, content: AnyMessageContent, messageId: string): Promise<string> => {
+      const before = new Date();
+      const sent = await socket.sendMessage(jid, content, { messageId });
+      // Never awaited: a slow or failing receipt must not delay or fail a
+      // message WhatsApp already accepted.
+      if (sent) void markEarlierAsRead(jid, before);
       return sent?.key.id ?? messageId;
     };
 

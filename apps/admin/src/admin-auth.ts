@@ -10,8 +10,17 @@ export interface AdminAuthStore {
 
 const COOKIE = "__Host-onconnect_admin";
 const SESSION_SECONDS = 8 * 60 * 60;
-const ATTEMPT_SECONDS = 60;
-const MAX_ATTEMPTS = 10;
+/**
+ * Sign-in limits. Per address: 10 attempts in 15 minutes (a success resets
+ * it). Across all addresses: 20 attempts a minute, so many addresses cannot
+ * keep the server busy checking bcrypt hashes; while that limit is hit the
+ * panel refuses everyone, the API is not affected.
+ */
+const IP_WINDOW_SECONDS = 15 * 60;
+const IP_MAX_ATTEMPTS = 10;
+const GLOBAL_WINDOW_SECONDS = 60;
+const GLOBAL_MAX_ATTEMPTS = 20;
+const GLOBAL_KEY = "admin:login:all";
 const TOKEN = /^[a-zA-Z0-9_-]{43}$/;
 
 const HASH = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -43,12 +52,20 @@ export function createAdminAuth(options: { username: string; passwordHash: strin
       return token !== null && await store.get(sessionKey(token)) === "active";
     },
     async signIn(ip: string, user: string, password: string) {
-      const limitKey = `admin:login:${HASH(ip)}`;
-      const attempts = Number(await store.eval(countAttempt, 1, limitKey, String(ATTEMPT_SECONDS)));
-      if (attempts > MAX_ATTEMPTS) return { status: "limited", retryAfter: ATTEMPT_SECONDS } as const;
+      const ipKey = `admin:login:ip:${HASH(ip)}`;
+      const count = async (key: string, seconds: number) =>
+        Number(await store.eval(countAttempt, 1, key, String(seconds)));
+      const [fromIp, overall] = await Promise.all([
+        count(ipKey, IP_WINDOW_SECONDS), count(GLOBAL_KEY, GLOBAL_WINDOW_SECONDS),
+      ]);
+      if (fromIp > IP_MAX_ATTEMPTS) return { status: "limited", scope: "ip", retryAfter: IP_WINDOW_SECONDS } as const;
+      if (overall > GLOBAL_MAX_ATTEMPTS) {
+        return { status: "limited", scope: "global", retryAfter: GLOBAL_WINDOW_SECONDS } as const;
+      }
       if (truncates(password)) return { status: "invalid" } as const;
       const matches = await compare(password, passwordHash);
       if (!matches || user !== username) return { status: "invalid" } as const;
+      await store.del(ipKey);
 
       const token = randomBytes(32).toString("base64url");
       await store.set(sessionKey(token), "active", "EX", SESSION_SECONDS);

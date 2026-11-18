@@ -138,6 +138,7 @@ describe("per-connection WhatsApp behavior", () => {
 
     await expect(adapter.sendMedia(PHONE, media("image"), MESSAGE_ID)).resolves.toBe(MESSAGE_ID);
 
+    await vi.waitFor(() => { expect(behavior.recordReadReceipts).toHaveBeenCalled(); });
     expect(behavior.messagesToRead).toHaveBeenCalledWith(
       "connection-1", [REGISTERED_JID, "989898@lid"], "558599132494", expect.any(Date),
     );
@@ -153,10 +154,41 @@ describe("per-connection WhatsApp behavior", () => {
     socket.readMessages.mockRejectedValueOnce(new Error("read failed"));
 
     await expect(adapter.sendText(PHONE, "reply", MESSAGE_ID)).resolves.toBe(MESSAGE_ID);
+    await vi.waitFor(() => { expect(socket.readMessages).toHaveBeenCalled(); });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(behavior.recordReadReceipts).not.toHaveBeenCalled();
 
     socket.sendMessage.mockRejectedValueOnce(new Error("send failed"));
     await expect(adapter.sendText(PHONE, "reply", MESSAGE_ID)).rejects.toThrow("send failed");
     expect(socket.readMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns the send result without waiting for the receipts", async () => {
+    const { adapter, behavior } = setup();
+    behavior.loadSettings.mockResolvedValue({ reject_calls: false, read_on_reply: true });
+    behavior.messagesToRead.mockReturnValue(new Promise(() => undefined));
+    await expect(adapter.sendText(PHONE, "reply", MESSAGE_ID)).resolves.toBe(MESSAGE_ID);
+  });
+
+  it("stops after a bounded number of batches", async () => {
+    const { socket, adapter, behavior } = setup();
+    behavior.loadSettings.mockResolvedValue({ reject_calls: false, read_on_reply: true });
+    // A store that never runs out (e.g. receipts not recorded) must not loop forever.
+    behavior.messagesToRead.mockResolvedValue([{ id: "inbound", remoteJid: REGISTERED_JID }]);
+    await adapter.sendText(PHONE, "first", MESSAGE_ID);
+    await vi.waitFor(() => { expect(socket.readMessages).toHaveBeenCalledTimes(5); });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(socket.readMessages).toHaveBeenCalledTimes(5);
+  });
+
+  it("runs once at a time per contact", async () => {
+    const { adapter, behavior } = setup();
+    behavior.loadSettings.mockResolvedValue({ reject_calls: false, read_on_reply: true });
+    behavior.messagesToRead.mockReturnValue(new Promise(() => undefined));
+    await adapter.sendText(PHONE, "first", MESSAGE_ID);
+    await vi.waitFor(() => { expect(behavior.messagesToRead).toHaveBeenCalledTimes(1); });
+    await adapter.sendText(PHONE, "second", MESSAGE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(behavior.messagesToRead).toHaveBeenCalledTimes(1);
   });
 });

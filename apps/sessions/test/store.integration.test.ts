@@ -180,6 +180,11 @@ describe.skipIf(!enabled)("sessions store as onconnect_system (PostgreSQL 17)", 
     ]);
     await sessions.recordReadReceipts(CONN, ["READ-LID", "IN-1"]);
     expect(await sessions.messagesToRead(CONN, [jid, lid], phone, cutoff)).toEqual([]);
+
+    // Older than 7 days: never marked, so turning the option on does not walk the history.
+    await sessions.recordInbound(CONN, inbound("OLD"));
+    await sql("UPDATE onconnect.messages SET created_at = now() - interval '8 days' WHERE provider_message_id = 'OLD'");
+    expect(await sessions.messagesToRead(CONN, [jid, lid], phone, cutoff)).toEqual([]);
   });
 
   it("ignores events for a retired connection", async () => {

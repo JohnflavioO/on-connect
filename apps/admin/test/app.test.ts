@@ -101,8 +101,24 @@ let queries = fakeQueries();
 const sessions = { start: vi.fn(async () => undefined), logout: vi.fn(async () => undefined),
   currentQr: vi.fn(async (): Promise<string | null> => "2@qr") };
 
-const proxyHeaders = { "x-onconnect-admin-secret": SECRET };
+const proxyHeaders = { "x-onconnect-console-secret": SECRET };
 let viaCaddy = { ...proxyHeaders, cookie: "" };
+
+/** In-memory stand-in for the Redis commands the sign-in uses. */
+function memoryStore() {
+  const keys = new Map<string, string>();
+  const attempts = new Map<string, number>();
+  return {
+    get: async (key: string) => keys.get(key) ?? null,
+    set: async (key: string, value: string) => { keys.set(key, value); },
+    del: async (key: string) => Number(keys.delete(key)) + Number(attempts.delete(key)),
+    eval: async (_script: string, _keyCount: number, key = "") => {
+      const count = (attempts.get(key) ?? 0) + 1;
+      attempts.set(key, count);
+      return count;
+    },
+  };
+}
 
 async function start(signedIn = true) {
   queries = fakeQueries();
@@ -150,7 +166,7 @@ const post = (instance: FastifyInstance, url: string, body = "", origin: string 
 describe("access guard", () => {
   it("hides the panel from anything that did not come through Caddy", async () => {
     const instance = await start();
-    for (const headers of [{}, { "x-onconnect-admin-secret": "wrong" }]) {
+    for (const headers of [{}, { "x-onconnect-console-secret": "wrong" }, { "x-onconnect-admin-secret": SECRET }]) {
       const response = await instance.inject({ method: "GET", url: "/admin", headers });
       expect(response.statusCode).toBe(404);
       expect(response.body).not.toContain("Dashboard");
@@ -230,7 +246,30 @@ describe("public site and admin sign-in", () => {
     }
     const limited = await post(instance, "/admin/login", `username=john&password=${PASSWORD}`);
     expect(limited.statusCode).toBe(429);
-    expect(limited.headers["retry-after"]).toBe("60");
+    expect(limited.headers["retry-after"]).toBe("900");
+    expect(limited.body).toContain("Aguarde 15 minutos");
+  });
+
+  it("resets the per-address count after a success", async () => {
+    await start(false);
+    const auth = createAdminAuth({ username: "john", passwordHash: HASH, store: memoryStore() });
+    // 14 attempts from one address: more than its 10, fewer than the global 20.
+    for (let round = 0; round < 2; round++) {
+      for (let attempt = 0; attempt < 6; attempt++) {
+        expect((await auth.signIn("203.0.113.9", "john", "wrong")).status).toBe("invalid");
+      }
+      expect((await auth.signIn("203.0.113.9", "john", PASSWORD)).status).toBe("ok");
+    }
+  });
+
+  it("limits attempts across many addresses so they cannot keep the server busy", async () => {
+    const auth = createAdminAuth({ username: "john", passwordHash: HASH, store: memoryStore() });
+    for (let attempt = 0; attempt < 20; attempt++) {
+      expect((await auth.signIn(`198.51.100.${attempt}`, "john", "wrong")).status).toBe("invalid");
+    }
+    expect(await auth.signIn("198.51.100.200", "john", PASSWORD)).toMatchObject({
+      status: "limited", scope: "global", retryAfter: 60,
+    });
   });
 });
 
