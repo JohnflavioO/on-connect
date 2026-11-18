@@ -164,6 +164,27 @@ describe("pages", () => {
     expect(queries.dashboard).toHaveBeenCalledWith(7);
   });
 
+  it("shows the brand logo and favicon on every page", async () => {
+    const instance = await start();
+    const response = await instance.inject({ method: "GET", url: "/admin/connections", headers: viaCaddy });
+    expect(response.body).toContain('<img class="brand-logo" src="/admin/assets/logo.png"');
+    expect(response.body).toContain('rel="icon" type="image/svg+xml" href="/admin/assets/favicon.svg"');
+    expect(response.body).toContain('rel="icon" type="image/png" href="/admin/assets/icon.png"');
+    for (const [path, type] of [
+      ["/admin/assets/logo.png", "image/png"],
+      ["/admin/assets/icon.png", "image/png"],
+      ["/admin/assets/favicon.svg", "image/svg+xml"],
+    ] as const) {
+      const asset = await instance.inject({ method: "GET", url: path, headers: viaCaddy });
+      expect(asset.statusCode).toBe(200);
+      expect(asset.headers["content-type"]).toContain(type);
+    }
+    const png = await instance.inject({ method: "GET", url: "/admin/assets/logo.png", headers: viaCaddy });
+    expect(png.rawPayload.subarray(1, 4).toString()).toBe("PNG");
+    const svg = await instance.inject({ method: "GET", url: "/admin/assets/favicon.svg", headers: viaCaddy });
+    expect(svg.body).toContain("data:image/png;base64,");
+  });
+
   it("applies a supported chart period and rejects unsupported values by using the default", async () => {
     const instance = await start();
     const response = await instance.inject({ method: "GET", url: "/admin?days=30", headers: viaCaddy });

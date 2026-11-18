@@ -3,6 +3,7 @@ import { WEBHOOK_EVENT_TYPES, loggerOptions, type SessionGateway } from "@on-con
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import QRCode from "qrcode";
 import { CSS, JS } from "./assets.js";
+import { FAVICON_SVG, ICON_PNG, LOGO_PNG } from "./brand.js";
 import { connectionTable, dashboardView } from "./dashboard.js";
 import { badge, formatDate, formatNumber, html, icon, maskUrl, page } from "./html.js";
 import { CONNECTION_TABS, connectionPage, type ConnectionTab } from "./connection-page.js";
@@ -121,6 +122,9 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
     });
 
   app.get("/health/live", async () => ({ status: "ok" }));
+  app.get("/admin/assets/logo.png", async (_request, reply) => reply.type("image/png").send(LOGO_PNG));
+  app.get("/admin/assets/icon.png", async (_request, reply) => reply.type("image/png").send(ICON_PNG));
+  app.get("/admin/assets/favicon.svg", async (_request, reply) => reply.type("image/svg+xml").send(FAVICON_SVG));
   app.get("/admin/assets/admin.css", async (_request, reply) => reply.type("text/css; charset=utf-8").send(CSS));
   app.get("/admin/assets/admin.js", async (_request, reply) =>
     reply.type("text/javascript; charset=utf-8").send(JS));

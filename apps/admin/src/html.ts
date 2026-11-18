@@ -148,13 +148,16 @@ export function page(options: PageOptions): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>${options.title} · On Connect Admin</title>
+<link rel="icon" type="image/svg+xml" href="/admin/assets/favicon.svg">
+<link rel="icon" type="image/png" href="/admin/assets/icon.png">
+<link rel="apple-touch-icon" href="/admin/assets/icon.png">
 <link rel="stylesheet" href="/admin/assets/admin.css">
 <script src="/admin/assets/admin.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main-content">Ir para o conteúdo</a>
 <aside class="sidebar">
-  <a class="brand" href="/admin"><span class="logo">${icon("activity")}</span><span>On Connect<small>CONSOLE</small></span></a>
+  <a class="brand" href="/admin" aria-label="On Connect API · Console"><img class="brand-logo" src="/admin/assets/logo.png" alt="On Connect API" width="1388" height="331"><small>CONSOLE</small></a>
   <div class="nav-caption">PLATAFORMA</div>
   <nav aria-label="Navegação principal">
     ${NAV.map(([key, href, label, symbol]) =>
