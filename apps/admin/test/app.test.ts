@@ -234,6 +234,25 @@ describe("public site and admin sign-in", () => {
     expect((await instance.inject({ url: "/docs" })).statusCode).toBe(404);
   });
 
+  it("serves the legal pages without login and links them from the landing", async () => {
+    const instance = await start(false);
+    const home = await instance.inject({ url: "/", headers: proxyHeaders });
+    for (const [path, title] of [
+      ["/privacidade", "Política de Privacidade"],
+      ["/termos", "Termos de Uso"],
+      ["/exclusao-de-dados", "Exclusão de dados"],
+    ] as const) {
+      expect(home.body).toContain(`href="${path}"`);
+      const response = await instance.inject({ url: path, headers: proxyHeaders });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["content-type"]).toContain("text/html");
+      expect(response.body).toContain(`<h1>${title}</h1>`);
+      expect(response.body).toContain("59.251.387/0001-00");
+      // Fora da Caddy (sem o segredo do proxy) continua fechado.
+      expect((await instance.inject({ url: path })).statusCode).toBe(404);
+    }
+  });
+
   it("links the landing page to a branded login and protects private routes", async () => {
     const instance = await start(false);
     const home = await instance.inject({ url: "/", headers: proxyHeaders });

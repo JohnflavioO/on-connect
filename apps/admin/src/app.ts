@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import type { AdminAuth } from "./admin-auth.js";
 import { PUBLIC_CSS } from "./public-css.js";
 import { documentationPage } from "./documentation-page.js";
+import { dataDeletionPage, privacyPage, termsPage } from "./legal-pages.js";
 import { landingPage, loginPage } from "./public-pages.js";
 import { CSS, JS } from "./assets.js";
 import { FAVICON_SVG, ICON_PNG, LOGO_PNG } from "./brand.js";
@@ -95,7 +96,8 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
       }
     }
     const path = request.url.split("?", 1)[0];
-    if (path === "/" || path === "/docs" || path === "/admin/login" || path === "/assets/on-connect.css"
+    if (path === "/" || path === "/docs" || path === "/privacidade" || path === "/termos" || path === "/exclusao-de-dados"
+      || path === "/admin/login" || path === "/assets/on-connect.css"
       || path === "/admin/assets/admin.css" || path === "/admin/assets/logo.png"
       || path === "/admin/assets/icon.png" || path === "/admin/assets/favicon.svg") return undefined;
     if (!(await auth.authenticated(request.headers.cookie))) {
@@ -159,6 +161,10 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
   app.get("/", async (_request, reply) => reply.type("text/html; charset=utf-8").send(landingPage()));
   app.get("/docs", async (_request, reply) =>
     reply.type("text/html; charset=utf-8").send(documentationPage(origin)));
+  // Páginas legais exigidas pela Meta na análise do app (Login do Facebook).
+  app.get("/privacidade", async (_request, reply) => reply.type("text/html; charset=utf-8").send(privacyPage()));
+  app.get("/termos", async (_request, reply) => reply.type("text/html; charset=utf-8").send(termsPage()));
+  app.get("/exclusao-de-dados", async (_request, reply) => reply.type("text/html; charset=utf-8").send(dataDeletionPage()));
   app.get("/assets/on-connect.css", async (_request, reply) =>
     reply.type("text/css; charset=utf-8").send(PUBLIC_CSS));
   app.get("/admin/login", async (request, reply) => {

@@ -145,9 +145,10 @@ Content-Type: application/json
     <nav class="public-nav footer-nav" aria-label="Links do rodapé">
       <a href="#solucao">Solução</a><a href="#recursos">Recursos</a><a href="#como-funciona">Como funciona</a>
       <a href="#plano">Plano</a><a href="/docs">Documentação</a><a href="/admin/login">Acessar conta</a>
+      <a href="/privacidade">Política de Privacidade</a><a href="/termos">Termos de Uso</a><a href="/exclusao-de-dados">Exclusão de dados</a>
     </nav>
   </div>
-  <div class="public-container footer-meta">© ${new Date().getUTCFullYear()} On Connect</div>
+  <div class="public-container footer-meta">© ${new Date().getUTCFullYear()} On Connect · FRANCISCO JOHNNOTTON FLAVIO DE OLIVEIRA · CNPJ 59.251.387/0001-00</div>
 </footer>`);
 }
 

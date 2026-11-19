@@ -23,7 +23,7 @@
 	# panel (which relied on basic_auth here) does not accept: whichever of
 	# Caddy and admin is updated first, the console is never served without
 	# its own login. X-OnConnect-Admin-Secret is dropped for the same reason.
-	@console path / /docs /assets/on-connect.css /admin /admin/*
+	@console path / /docs /privacidade /termos /exclusao-de-dados /assets/on-connect.css /admin /admin/*
 	handle @console {
 		reverse_proxy admin:8081 {
 			header_up X-OnConnect-Console-Secret {$ADMIN_PROXY_SECRET}
