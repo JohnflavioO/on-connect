@@ -1,6 +1,20 @@
 # Estado do projeto
 
-Atualizado em 2026-11-18. Atualize este arquivo ao fim de cada etapa.
+Atualizado em 2026-11-19. Atualize este arquivo ao fim de cada etapa.
+
+## Meta: teste em produção e análise do app (2026-11-19)
+
+- Conferido na VPS: `main` em `32da709`, as 5 variáveis `META_*` preenchidas e `api`/`sessions`
+  já rodando com elas. A conexão "Teste Meta" (número de teste +1 555 136 2965) está conectada.
+- Recebimento pela Meta funcionando. Envio aceito pela Meta, mas entregue com falha
+  `meta_130497` ("Business account is restricted from messaging users in this country"):
+  a conta de teste do WhatsApp não tem forma de pagamento para o Brasil. Falta cadastrar
+  um número real (+55) e o pagamento na Etapa 2 do app.
+- O app On-Connect (id `1473739174705593`) pertence ao portfólio `studio.on.design`, verificado
+  em 18/11 com o MEI (CNPJ 59.251.387/0001-00).
+- Branch `feat/paginas-legais`: páginas públicas `/privacidade`, `/termos` e
+  `/exclusao-de-dados` no `admin` (exigidas pela análise do app). Depois do merge,
+  atualizar `admin` e **`caddy`** (a Caddy precisa encaminhar os novos caminhos).
 
 ## Meta Cloud API, fase 1 (2026-11-18)
 
