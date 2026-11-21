@@ -479,6 +479,10 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
     } finally {
       await sql("DELETE FROM onconnect.messages WHERE connection_id = $1", [metaId]);
       await sql("DELETE FROM onconnect.audit_log WHERE target_id IN ($1, $2)", [metaId, qrId]);
+      // The soft-deleted QR connection still has status webhook events
+      // referencing its composite key; remove those before deleting fixtures.
+      await sql("DELETE FROM onconnect.webhook_deliveries WHERE event_id IN (SELECT id FROM onconnect.webhook_events WHERE connection_id IN ($1, $2))", [metaId, qrId]);
+      await sql("DELETE FROM onconnect.webhook_events WHERE connection_id IN ($1, $2)", [metaId, qrId]);
       await sql("DELETE FROM onconnect.connections WHERE id IN ($1, $2)", [metaId, qrId]);
       await sql("DELETE FROM onconnect.tenants WHERE id IN ($1, $2)", [metaTenant, targetTenant]);
     }
