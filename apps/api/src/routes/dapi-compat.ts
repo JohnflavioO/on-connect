@@ -291,7 +291,7 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
           );
           const current = await findCompatSession(tx, request.params.sessionId);
           if (!current) return null;
-          if (current.provider !== "meta_cloud" || current.status === "connected") {
+          if (current.provider !== "meta_cloud" || current.status !== "disconnected") {
             return { oldId: "", newId: "" };
           }
           const retired = await deleteCompatSession(tx, principal, request.params.sessionId);
