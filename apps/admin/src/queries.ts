@@ -258,6 +258,97 @@ export function createAdminQueries(pool: DatabasePool, pepper: string) {
       }
     },
 
+    /**
+     * Relink an existing Meta connection to a Tendi D-API session without
+     * recreating the number or changing its tenant_id. Historical messages
+     * reference (connection_id, client_id, tenant_id), so moving tenant_id
+     * would break their composite foreign keys.
+     *
+     * An occupied target is only replaced with explicit consent, and only
+     * WhatsApp Web connections may be retired automatically.
+     */
+    async relinkMetaSession(admin: Admin, id: string, sessionKey: string, replace: boolean):
+      Promise<{ id: string; replaced: string[] } | { error: "not_found" | "session_in_use" | "session_conflict" }> {
+      const db = await pool.connect();
+      try {
+        await db.query("BEGIN");
+        const [source] = (await db.query<{ client_id: string; session_key: string | null; tenant_id: string }>(
+          `SELECT client_id, session_key, tenant_id FROM onconnect.connections
+             WHERE id = $1 AND provider = 'meta_cloud' AND deleted_at IS NULL FOR UPDATE`,
+          [id],
+        )).rows;
+        if (!source) {
+          await db.query("ROLLBACK");
+          return { error: "not_found" };
+        }
+        await db.query(
+          "SELECT pg_advisory_xact_lock(hashtext('compat_session:' || $1::text || ':' || $2))",
+          [source.client_id, sessionKey],
+        );
+        const [target] = (await db.query<{ id: string }>(
+          "SELECT id FROM onconnect.tenants WHERE client_id = $1 AND external_id = $2 FOR UPDATE",
+          [source.client_id, sessionKey],
+        )).rows;
+        // Do not silently create a second tenant. The workspace must already
+        // exist, so the administrator can verify the correct destination.
+        if (!target) {
+          await db.query("ROLLBACK");
+          return { error: "session_conflict" };
+        }
+        const occupied = (await db.query<{ id: string; provider: string }>(
+          `SELECT id, provider FROM onconnect.connections
+             WHERE client_id = $1 AND deleted_at IS NULL AND id <> $2
+               AND (session_key = $3 OR tenant_id = $4)
+             FOR UPDATE`,
+          [source.client_id, id, sessionKey, target.id],
+        )).rows;
+        if (occupied.some((row) => row.provider !== "whatsapp_web")) {
+          await db.query("ROLLBACK");
+          return { error: "session_conflict" };
+        }
+        if (occupied.length > 0 && !replace) {
+          await db.query("ROLLBACK");
+          return { error: "session_in_use" };
+        }
+        for (const row of occupied) {
+          await db.query(
+            `UPDATE onconnect.connections
+                SET deleted_at = now(), status = 'disconnected',
+                    status_reason = 'replaced_by_official', status_changed_at = now()
+              WHERE id = $1 AND client_id = $2`,
+            [row.id, source.client_id],
+          );
+          await db.query(
+            `INSERT INTO onconnect.audit_log
+                 (client_id, actor_type, actor_id, action, target_type, target_id, metadata)
+               VALUES ($1, 'admin', $2, 'connection.deleted', 'connection', $3, $4)`,
+            [source.client_id, admin.name, row.id, JSON.stringify({
+              reason: "replaced_by_official", sessionId: sessionKey, replacedBy: id,
+            })],
+          );
+        }
+        await db.query(
+          "UPDATE onconnect.connections SET session_key = $2 WHERE id = $1 AND client_id = $3",
+          [id, sessionKey, source.client_id],
+        );
+        await db.query(
+          `INSERT INTO onconnect.audit_log
+               (client_id, actor_type, actor_id, action, target_type, target_id, metadata)
+             VALUES ($1, 'admin', $2, 'connection.session_relinked', 'connection', $3, $4)`,
+          [source.client_id, admin.name, id, JSON.stringify({
+            from: source.session_key, to: sessionKey, replaced: occupied.map((row) => row.id),
+          })],
+        );
+        await db.query("COMMIT");
+        return { id, replaced: occupied.map((row) => row.id) };
+      } catch (error) {
+        await db.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        db.release();
+      }
+    },
+
     async createMetaConnection(admin: Admin, input: {
       clientId: string; tenantExternalId: string; phoneNumberId: string; wabaId: string | null; label: string | null;
     }): Promise<{ id: string } | { error: "tenant_not_found" | "limit_reached" | "number_in_use" }> {
