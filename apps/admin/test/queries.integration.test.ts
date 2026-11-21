@@ -424,4 +424,64 @@ describe.skipIf(!enabled)("admin panel queries (PostgreSQL 17)", () => {
       "SELECT count(*) AS n FROM onconnect.tenants WHERE client_id = $1 AND external_id = 'tendi-admin-other'", [CLIENT]);
     expect(tenant?.n).toBe("0");
   });
+  it("relinks an existing Meta number to a Tendi session, preserving history and requiring QR replacement consent", async () => {
+    const metaTenant = "bbbbbbbb-0000-4000-8000-0000000000a1";
+    const targetTenant = "bbbbbbbb-0000-4000-8000-0000000000a2";
+    const metaId = "bbbbbbbb-0000-4000-8000-0000000000a3";
+    const qrId = "bbbbbbbb-0000-4000-8000-0000000000a4";
+    const sessionKey = "tendi-637a9d9f-f621-4462-8445-dc3d2fd48304";
+    await sql(
+      `INSERT INTO onconnect.tenants (id, client_id, external_id, name, max_connections)
+       VALUES ($1, $3, 'legacy-meta', 'Legacy Meta', 1),
+              ($2, $3, $4, 'Tendi workspace', 1)`,
+      [metaTenant, targetTenant, CLIENT, sessionKey],
+    );
+    await sql(
+      `INSERT INTO onconnect.connections
+         (id, client_id, tenant_id, provider, status, session_key, phone_number_id)
+       VALUES ($1, $3, $4, 'meta_cloud', 'connected', 'Tendi', '1458998000627394'),
+              ($2, $3, $5, 'whatsapp_web', 'connected', $6, NULL)`,
+      [metaId, qrId, CLIENT, metaTenant, targetTenant, sessionKey],
+    );
+    const [message] = await sql<{ id: string }>(
+      `INSERT INTO onconnect.messages
+         (client_id, tenant_id, connection_id, direction, status, message_type, counterpart, payload)
+       VALUES ($1, $2, $3, 'inbound', 'received', 'text', '5585999991111', '{}')
+       RETURNING id`,
+      [CLIENT, metaTenant, metaId],
+    );
+    try {
+      expect(await queries.relinkMetaSession(admin, metaId, sessionKey, false))
+        .toEqual({ error: "session_in_use" });
+      expect(await queries.relinkMetaSession(admin, metaId, "nonexistent-session", true))
+        .toEqual({ error: "session_conflict" });
+      expect((await queries.connection(metaId))?.session_key).toBe("Tendi");
+      expect(await queries.relinkMetaSession(admin, metaId, sessionKey, true))
+        .toEqual({ id: metaId, replaced: [qrId] });
+      const [meta] = await sql<{ tenant_id: string; session_key: string; deleted_at: Date | null }>(
+        "SELECT tenant_id, session_key, deleted_at FROM onconnect.connections WHERE id = $1", [metaId],
+      );
+      expect(meta).toMatchObject({ tenant_id: metaTenant, session_key: sessionKey, deleted_at: null });
+      const [qr] = await sql<{ deleted_at: Date | null }>(
+        "SELECT deleted_at FROM onconnect.connections WHERE id = $1", [qrId],
+      );
+      expect(qr?.deleted_at).not.toBeNull();
+      const [history] = await sql<{ tenant_id: string }>(
+        "SELECT tenant_id FROM onconnect.messages WHERE id = $1", [message?.id],
+      );
+      expect(history?.tenant_id).toBe(metaTenant);
+      const [event] = await sql<{ action: string }>(
+        `SELECT action FROM onconnect.audit_log
+         WHERE target_id = $1 AND action = 'connection.session_relinked' ORDER BY created_at DESC LIMIT 1`,
+        [metaId],
+      );
+      expect(event?.action).toBe("connection.session_relinked");
+    } finally {
+      await sql("DELETE FROM onconnect.messages WHERE connection_id = $1", [metaId]);
+      await sql("DELETE FROM onconnect.audit_log WHERE target_id IN ($1, $2)", [metaId, qrId]);
+      await sql("DELETE FROM onconnect.connections WHERE id IN ($1, $2)", [metaId, qrId]);
+      await sql("DELETE FROM onconnect.tenants WHERE id IN ($1, $2)", [metaTenant, targetTenant]);
+    }
+  });
+
 });
