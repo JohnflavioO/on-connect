@@ -357,6 +357,31 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
       : "Conexão Meta criada. A verificação com a Meta leva alguns segundos.");
   });
 
+  app.post<{ Params: { id: string }; Body: Record<string, string | undefined> }>(
+    "/admin/connections/:id/relink-meta", async (request, reply) => {
+      const id = request.params.id;
+      const sessionKey = (request.body?.sessionKey ?? "").trim();
+      const replace = request.body?.replace === "on";
+      const form = `/admin/connections/${id}?tab=desenvolvedor`;
+      if (!UUID.test(id) || !/^[A-Za-z0-9._-]{1,100}$/.test(sessionKey)) {
+        return back(reply, form, "Informe um código de sessão válido do TendiDesk.");
+      }
+      const result = await queries.relinkMetaSession(adminOf(), id, sessionKey, replace);
+      if ("error" in result) {
+        const messages = {
+          not_found: "Conexão Meta não encontrada ou removida.",
+          session_in_use: "O workspace já usa WhatsApp por QR Code. Marque a substituição para confirmar.",
+          session_conflict: "Sessão não encontrada ou ocupada por outra conexão oficial. Confira o código no TendiDesk.",
+        } as const;
+        return back(reply, form, messages[result.error]);
+      }
+      for (const replacedId of result.replaced) await sessions.logout(replacedId);
+      return back(reply, form, result.replaced.length
+        ? "Número Meta vinculado à sessão do TendiDesk. A conexão QR anterior foi encerrada."
+        : "Número Meta vinculado à sessão do TendiDesk, sem recriar o número.");
+    },
+  );
+
   app.get<{ Params: { id: string }; Querystring: { tab?: string } }>("/admin/connections/:id", async (request, reply) => {
     if (!UUID.test(request.params.id)) return notFound(reply, request, "Conexão");
     const row = await queries.connection(request.params.id);
