@@ -282,7 +282,7 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
     { schema: { params: sessionParams } },
     async (request, reply) => {
       const principal = principalOf(request);
-      let switched: { oldId: string; newId: string } | null = null;
+      let switched: { oldId: string; newId: string } | null;
       try {
         switched = await withClientTransaction(db, principal, async (tx) => {
           await tx.query(
