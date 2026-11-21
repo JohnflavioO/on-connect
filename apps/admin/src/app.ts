@@ -360,8 +360,8 @@ export async function buildAdminApp(options: AdminAppOptions): Promise<FastifyIn
   app.post<{ Params: { id: string }; Body: Record<string, string | undefined> }>(
     "/admin/connections/:id/relink-meta", async (request, reply) => {
       const id = request.params.id;
-      const sessionKey = (request.body?.sessionKey ?? "").trim();
-      const replace = request.body?.replace === "on";
+      const sessionKey = (request.body.sessionKey ?? "").trim();
+      const replace = request.body.replace === "on";
       const form = `/admin/connections/${id}?tab=desenvolvedor`;
       if (!UUID.test(id) || !/^[A-Za-z0-9._-]{1,100}$/.test(sessionKey)) {
         return back(reply, form, "Informe um código de sessão válido do TendiDesk.");
