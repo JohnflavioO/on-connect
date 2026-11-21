@@ -165,6 +165,23 @@ function desenvolvedorTab(row: Connection): Html {
         ${copyRow("dev-tenant", "Organização (tenant)", row.tenant)}
         ${copyRow("dev-client", "Cliente", row.client_slug)}
       </div>
+      ${row.provider === "meta_cloud" ? html`
+        <section class="panel" style="margin-top:1.5rem">
+          <h2>Vincular número oficial a uma sessão do TendiDesk</h2>
+          <p class="muted">Corrige o identificador da sessão sem recriar o número na Meta.
+            Confirme o código no Console do TendiDesk. O histórico da conexão oficial é preservado.</p>
+          <form class="stack" method="post" action="/admin/connections/${row.id}/relink-meta"
+            data-confirm="Confirmar o vínculo deste número oficial com a sessão informada? A sessão QR existente será encerrada somente se a substituição estiver marcada.">
+            <label>Código da sessão do workspace
+              <input name="sessionKey" required maxlength="100" pattern="[A-Za-z0-9._-]{1,100}"
+                placeholder="tendi-637a9d9f-…" autocomplete="off"></label>
+            <label class="checkbox"><input type="checkbox" name="replace" value="on">
+              <span>Substituir a conexão QR Code desta sessão, se existir.</span></label>
+            <button type="submit" class="button">Vincular sessão existente</button>
+          </form>
+          <p class="muted">A organização original da conexão permanece inalterada para preservar
+            as referências de mensagens e eventos históricos.</p>
+        </section>` : ""}
       <div class="info-note">${icon("shield")}<span><strong>API key não aparece aqui.</strong> O On Connect guarda só um resumo cifrado da chave, por segurança: ela é mostrada uma única vez, quando é criada. Para uma chave nova, vá em <a href="/admin/clients/${row.client_id}">Clientes</a>.</span></div>
     </section>`;
 }
