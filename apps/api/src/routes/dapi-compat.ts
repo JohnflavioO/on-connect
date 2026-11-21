@@ -274,6 +274,49 @@ export const dapiCompatRoutes: FastifyPluginAsync<DapiCompatRouteOptions> = asyn
     },
   );
 
+  // Explicit, tenant-scoped switch. Never mutate a Meta connection into a QR connection:
+  // retire it and create a fresh WhatsApp Web connection with the same public sessionId.
+  // The transaction rolls back entirely if the new connection cannot be created.
+  app.post<{ Params: Params }>(
+    "/sessions/:sessionId/switch-to-qr",
+    { schema: { params: sessionParams } },
+    async (request, reply) => {
+      const principal = principalOf(request);
+      let switched: { oldId: string; newId: string } | null = null;
+      try {
+        switched = await withClientTransaction(db, principal, async (tx) => {
+          await tx.query(
+            "SELECT pg_advisory_xact_lock(hashtext('compat_session:' || onconnect.current_client_id()::text || ':' || $1))",
+            [request.params.sessionId],
+          );
+          const current = await findCompatSession(tx, request.params.sessionId);
+          if (!current) return null;
+          if (current.provider !== "meta_cloud" || current.status === "connected") {
+            return { oldId: "", newId: "" };
+          }
+          const retired = await deleteCompatSession(tx, principal, request.params.sessionId);
+          if (!retired) throw new Error("Could not retire official connection");
+          const { session } = await upsertCompatSession(tx, principal, request.params.sessionId);
+          if (session.provider !== "whatsapp_web") throw new Error("QR session was not created");
+          return { oldId: retired, newId: session.connectionId };
+        });
+      } catch (error) {
+        if (error instanceof CompatSessionError) {
+          const [status, message] = COMPAT_ERRORS[error.reason];
+          return fail(reply, status, message);
+        }
+        throw error;
+      }
+      if (!switched) return notFound(reply);
+      if (!switched.oldId) return fail(reply, 409, "Disconnect the official Meta session before switching to QR");
+      // After commit: stop any old process; do not remove the WABA or Meta number.
+      await sessions.logout(switched.oldId);
+      await sessions.start(switched.newId);
+      return { success: true, sessionId: request.params.sessionId, status: "connecting",
+        provider: "whatsapp_web", connectionType: "unofficial" };
+    },
+  );
+
   app.delete<{ Params: Params }>(
     "/sessions/:sessionId",
     { schema: { params: sessionParams } },
