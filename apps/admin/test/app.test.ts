@@ -74,6 +74,7 @@ function fakeQueries() {
     deleteConnection: vi.fn(async () => true),
     createMetaConnection: vi.fn<AdminQueries["createMetaConnection"]>(async () => ({ id: META_CONN })),
     createMetaSession: vi.fn<AdminQueries["createMetaSession"]>(async () => ({ id: META_CONN, replaced: [] })),
+    relinkMetaSession: vi.fn<AdminQueries["relinkMetaSession"]>(async () => ({ id: META_CONN, replaced: [] })),
     updateConnectionBehavior: vi.fn(async () => true),
     webhookEndpoint: vi.fn(async (id: string) => id === KEY || id === NATIVE
       ? {
