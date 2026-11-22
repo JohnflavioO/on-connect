@@ -1643,7 +1643,13 @@ label.setting-row { cursor: pointer; }
 .health-state.idle { color: var(--muted); }
 .health-value { font-size: 29px; font-weight: 600; letter-spacing: -1px; font-variant-numeric: tabular-nums; }
 .health-detail { color: var(--muted); font-size: 12px; }
+.monitor-current { margin-bottom: 16px; }
 .monitor-chart rect { opacity: .9; }
+.monitor-empty {
+  display: flex; align-items: center; gap: 8px; margin: 0; padding: 10px 0 0;
+  border-top: 1px solid var(--line); color: var(--muted); font-size: 13px;
+}
+.monitor-empty .icon { width: 16px; height: 16px; flex: none; }
 @media (max-width: 1180px) { .health-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 680px) {
   .health-grid { grid-template-columns: 1fr; }
