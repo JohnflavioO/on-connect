@@ -178,6 +178,10 @@ const FAILURES: Series[] = [
   { key: "drops", label: "Quedas de conexão", color: "#c792ea" },
 ];
 
+function hasChartData(buckets: MonitoringBucket[], series: Series[]): boolean {
+  return buckets.some((bucket) => series.some(({ key }) => n(bucket[key]) > 0));
+}
+
 function legend(series: Series[], buckets: MonitoringBucket[]): Html {
   return html`<div class="chart-legend">${series.map((s) => html`<button type="button" data-chart-toggle="${s.key}" aria-pressed="true"><i class="legend-dot" style="background:${s.color}"></i>${s.label} <strong>${formatNumber(buckets.reduce((sum, b) => sum + n(b[s.key]), 0))}</strong></button>`)}</div>`;
 }
@@ -213,6 +217,18 @@ export function monitoringView(
     ${alerts.length === 0
       ? html`<div class="monitor-alert ok">${icon("check")}<span>Tudo funcionando: nenhum problema encontrado (${MONITORING_WINDOWS[period].label.toLowerCase()}).</span></div>`
       : html`<div class="monitor-alerts">${alerts.map((alert) => html`<a class="monitor-alert ${alert.tone}" href="${alert.href}">${icon("alert")}<span>${alert.text}</span><b>Ver detalhes ${icon("arrow")}</b></a>`)}</div>`}
+    <section class="panel monitor-current"><div class="section-heading"><div><p class="eyebrow">AGORA</p><h2>Conexões fora do ar</h2><p class="section-description">Situação atual, independente do período.</p></div><a class="button compact" href="/admin/connections">Ver todas ${icon("arrow")}</a></div>
+      ${data.problems.length === 0
+        ? html`<p class="monitor-empty">${icon("check")} Nenhuma conexão fora do ar agora.</p>`
+        : html`<div class="table-wrap"><table>
+          <thead><tr><th>Sessão</th><th>Cliente</th><th>Status</th><th>Desde</th></tr></thead>
+          <tbody>${data.problems.map((row) => html`<tr>
+            <td><a href="/admin/connections/${row.id}">${row.session_key ?? row.tenant}</a></td>
+            <td>${row.client_slug}</td>
+            <td>${badge(row.status)}${row.status_reason ? html`<div class="status-reason">${REASONS[row.status_reason] ?? row.status_reason}</div>` : ""}</td>
+            <td class="table-date">${formatDate(row.status_changed_at)} · ${ago(row.status_changed_at, now)}</td>
+          </tr>`)}</tbody>
+        </table></div>`}</section>
     <div class="health-grid" ${worst ? html`data-worst="${worst}"` : ""}>
       ${cards.map((card) => html`<a class="health-card ${card.tone}" href="${card.href}">
         <div class="health-top"><span class="health-name">${icon(card.icon)}${card.label}</span><span class="health-state ${card.tone}"><i></i>${TONE_LABELS[card.tone]}</span></div>
@@ -220,23 +236,13 @@ export function monitoringView(
         <span class="health-detail">${card.detail}</span></a>`)}
     </div>
     <section class="panel"><div class="section-heading"><div><p class="eyebrow">ATIVIDADE</p><h2>Tráfego no período</h2><p class="section-description">Mensagens recebidas e enviadas, e webhooks entregues aos clientes.</p></div></div>
-      ${legend(TRAFFIC, data.buckets)}
-      ${chart(data.buckets, period, TRAFFIC, "line", "Tráfego por intervalo")}</section>
+      ${hasChartData(data.buckets, TRAFFIC)
+        ? html`${legend(TRAFFIC, data.buckets)}${chart(data.buckets, period, TRAFFIC, "line", "Tráfego por intervalo")}`
+        : html`<p class="monitor-empty">${icon("activity")} Sem atividade registrada neste período.</p>`}</section>
     <section class="panel"><div class="section-heading"><div><p class="eyebrow">FALHAS</p><h2>Tudo o que não deu certo</h2><p class="section-description">Por origem: entregas de webhook, envios e quedas de conexão.</p></div></div>
-      ${legend(FAILURES, data.buckets)}
-      ${chart(data.buckets, period, FAILURES, "bar", "Falhas por intervalo")}</section>
-    <section class="panel"><div class="section-heading"><div><p class="eyebrow">AGORA</p><h2>Conexões fora do ar</h2><p class="section-description">Situação atual, independente do período.</p></div><a class="button compact" href="/admin/connections">Ver todas ${icon("arrow")}</a></div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Sessão</th><th>Cliente</th><th>Status</th><th>Desde</th></tr></thead>
-        <tbody>${data.problems.length === 0
-          ? html`<tr><td colspan="4"><div class="empty-state">${icon("check")}<strong>Todas as conexões estão conectadas.</strong></div></td></tr>`
-          : data.problems.map((row) => html`<tr>
-            <td><a href="/admin/connections/${row.id}">${row.session_key ?? row.tenant}</a></td>
-            <td>${row.client_slug}</td>
-            <td>${badge(row.status)}${row.status_reason ? html`<div class="status-reason">${REASONS[row.status_reason] ?? row.status_reason}</div>` : ""}</td>
-            <td class="table-date">${formatDate(row.status_changed_at)} · ${ago(row.status_changed_at, now)}</td>
-          </tr>`)}</tbody>
-      </table></div></section>
+      ${hasChartData(data.buckets, FAILURES)
+        ? html`${legend(FAILURES, data.buckets)}${chart(data.buckets, period, FAILURES, "bar", "Falhas por intervalo")}`
+        : html`<p class="monitor-empty">${icon("check")} Nenhuma falha registrada neste período.</p>`}</section>
     <p class="chart-footnote">${icon("activity")} Fila de webhooks agora: ${formatNumber(n(totals.queued))} aguardando · Horário de São Paulo</p>
     ${period === "1h" ? html`<span hidden data-autorefresh="30"></span>` : ""}`;
 }

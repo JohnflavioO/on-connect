@@ -736,8 +736,31 @@ describe("monitoring", () => {
     expect(response.body).toContain("monitor-alert bad");
     expect(response.body).toContain("Crítico");
     expect(response.body).toContain("tendi-org-1");
+    expect(response.body).toMatch(/monitor-alerts[\s\S]*Conexões fora do ar[\s\S]*Tráfego no período[\s\S]*Tudo o que não deu certo/);
+    expect(response.body).toContain('aria-label="Tráfego por intervalo"');
+    expect(response.body).toContain('aria-label="Falhas por intervalo"');
     expect(response.body).toContain("data-autorefresh");
     expect(response.body).toContain('aria-current="page"');
+  });
+
+  it("shows compact states for zero buckets while listing a connection still offline", async () => {
+    const instance = await start();
+    const data = await queries.monitoring("1h");
+    queries.monitoring.mockResolvedValueOnce({
+      ...data,
+      totals: healthyTotals({ connected: "1", received: "0", sent: "0", delivered: "0" }),
+      buckets: [{
+        at: NOW, received: "0", sent: "0", delivered: "0", webhook_failed: "0", send_failed: "0", drops: "0",
+      }],
+    });
+
+    const response = await instance.inject({ method: "GET", url: "/admin/monitoring", headers: viaCaddy });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("Número desconectado");
+    expect(response.body).toContain("Sem atividade registrada neste período.");
+    expect(response.body).toContain("Nenhuma falha registrada neste período.");
+    expect(response.body).not.toContain('class="volume-chart monitor-chart"');
+    expect(response.body).not.toContain("data-chart-toggle");
   });
 
   it("accepts only known periods and refreshes itself only in the live view", async () => {
